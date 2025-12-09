@@ -90,8 +90,43 @@ ui <- fluidPage(
         background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
         padding: 15px; border-radius: 8px; border-left: 5px solid #ff9800; margin: 10px 0;
       }
+      .naming-tool-box {
+        background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%);
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #f57f17;
+        margin-bottom: 20px;
+      }
+      .naming-tool-box h6 {
+        margin: 0 0 10px 0;
+        color: #f57f17;
+        font-weight: 600;
+      }
+      .naming-tool-box p {
+        font-size: 0.9em;
+        margin: 5px 0;
+        color: #424242;
+      }
       .comp-box h6 { margin: 0 0 8px 0; font-weight: 600; color: #e65100; }
-      .comp-box p { font-size: 0.85em; margin: 5px 0; color: #424242; }
+      .comp-box p { font-size: 0.85em; margin: 5px 0; color: #424242; 
+      }
+      .naming-tool-box {
+        background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%);
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #f57f17;
+        margin-bottom: 20px;
+      }
+      .naming-tool-box h6 {
+        margin: 0 0 10px 0;
+        color: #f57f17;
+        font-weight: 600;
+      }
+      .naming-tool-box p {
+        font-size: 0.9em;
+        margin: 5px 0;
+        color: #424242;
+      }
     "))
   ),
   
@@ -102,10 +137,24 @@ ui <- fluidPage(
   div(class = "content-wrapper",
       fluidRow(
         column(3, class = "sidebar",
-               h4(icon("upload"), " Upload Files"),
-               fileInput("files", "Select .fcs files:",
-                         multiple = TRUE,
-                         accept = c(".fcs", ".FCS")),
+                div(style = "background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%); 
+               padding: 15px; border-radius: 8px; border-left: 5px solid #f57f17; 
+               margin-bottom: 20px;",
+                    h6(style = "margin: 0 0 10px 0; color: #f57f17; font-weight: 600;",
+                       icon("tools"), " Need to Rename Files?"),
+                    p(style = "font-size: 0.9em; margin: 5px 0; color: #424242;",
+                      "Use our automated file renaming tool to quickly format your FCS files 
+         to match the required naming convention."),
+                    tags$a(href = "https://huggingface.co/spaces/mahmood-iab/file_naming", 
+                           target = "_blank",
+                           class = "btn btn-warning btn-sm btn-block",
+                           style = "margin-top: 10px; font-weight: 600;",
+                           icon("external-link-alt"), " Open File Naming Tool")
+                ),
+                
+                h4(icon("upload"), " Upload Files"),
+                fileInput("files", "Select .fcs files:", multiple = TRUE, accept = c(".fcs", ".FCS")),
+                
                hr(),
                div(class = "file-format-box",
                    h6(icon("info-circle"), " File Naming Convention"),
