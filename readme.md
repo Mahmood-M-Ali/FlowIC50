@@ -59,9 +59,8 @@ For fluorescence compensation, upload three controls:
 
 - **Unstained**: No fluorescent staining  
 - **Annexin V-FITC only**: Single positive control  
-- **PI only**: Single positive control  
-
-The application calculates a compensation matrix using classical spillover correction (Roederer, 2001).
+- **PI only**: Single positive control
+- In the current version, the application is optimized for analyzing cells stained with Propidium Iodide (PI) and Annexin V. However, the workflow is flexible — you can substitute any two stains, and the analysis will still function correctly despite the namings of stains. Future updates will further generalize the app to support a wider range of staining combinations.
 
 ---
 
@@ -102,7 +101,8 @@ Gates defined on control samples and applied uniformly to all conditions
 
 ---
 
-## 💻 Local Installation
+## Local Installation
+To run the codce locally on your own R you can take the code directly from Github and it will funciton correclty as the website.
 
 ### Prerequisites
 
@@ -115,3 +115,4 @@ BiocManager::install("flowCore")
 # CRAN packages
 install.packages(c("shiny", "bslib", "ggplot2", "dplyr", "tidyr",
                    "readr", "stringr", "drc", "scales", "sp", "zip"))
+
