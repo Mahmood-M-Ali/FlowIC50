@@ -72,11 +72,11 @@ File names must follow this format: CellLine\_Treatment\_ConcentrationuM\_Replic
 
 \*\*Examples:\*\*
 
-\- `Ly18\_YF2\_0uM\_Rep1.fcs`
+\- `Ly18_YF2_0uM_Rep1.fcs`
 
-\- `HT\_DMSO\_50uM\_Rep2.fcs`
+\- `HT_DMSO_50uM_Rep2.fcs`
 
-\- `SUDHL4\_Compound\_10.5uM\_Rep1.fcs`
+\- `SUDHL4_Compound_10.5uM_Rep1.fcs`
 
 
 
@@ -355,6 +355,7 @@ This work is licensed under Creative Commons Attribution-NonCommercial 4.0 Inter
 \- Roederer, 2001. Cytometry (Compensation)
 
 \- Ritz \& Streibig, 2005. J Stat Softw (drc package)
+
 
 
 
