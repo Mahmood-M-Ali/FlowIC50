@@ -1,5 +1,6 @@
 # Flow Cytometry IC50 Analyzer
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.xxxxx.svg)](https://doi.org/10.5281/zenodo.xxxxx)
 [![R](https://img.shields.io/badge/R-%3E%3D4.0-blue)](https://www.r-project.org/)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](http://creativecommons.org/licenses/by-nc/4.0/)
 [![Shiny](https://img.shields.io/badge/Shiny-App-blue)](https://shiny.rstudio.com/)
@@ -115,4 +116,5 @@ BiocManager::install("flowCore")
 # CRAN packages
 install.packages(c("shiny", "bslib", "ggplot2", "dplyr", "tidyr",
                    "readr", "stringr", "drc", "scales", "sp", "zip"))
+
 
