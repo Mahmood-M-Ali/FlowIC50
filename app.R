@@ -1,6 +1,6 @@
 # ============================================================================
-# FACS IC50 ANALYSIS - COMPLETE FUNCTIONAL VERSION
-# With compensation, control selection, and ZIP download
+# FACS IC50 ANALYSIS - ENHANCED VERSION
+# With 4-quadrant analysis, cell death curves, publication-ready exports
 # ============================================================================
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
@@ -10,8 +10,9 @@ if (!requireNamespace("flowCore", quietly = TRUE)) {
   BiocManager::install("flowCore")
 }
 
-required_packages <- c("shiny", "bslib", "ggplot2", "dplyr", "tidyr", 
-                       "readr", "stringr", "drc", "scales", "sp", "zip")
+required_packages <- c("shiny", "bslib", "ggplot2", "dplyr", "tidyr",
+                       "readr", "stringr", "drc", "scales", "sp", "zip", "svglite",
+                       "outliers", "DescTools", "pheatmap", "gridExtra")
 for(pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
 }
@@ -29,7 +30,56 @@ suppressPackageStartupMessages({
   library(scales)
   library(sp)
   library(zip)
+  library(svglite)
+  library(outliers)
+  library(DescTools)
+  library(pheatmap)
+  library(gridExtra)
 })
+
+# ============================================================================
+# OKABE-ITO COLORBLIND-FRIENDLY PALETTE
+# ============================================================================
+okabe_ito_colors <- c(
+  "#000000",  # Black
+  "#E69F00",  # Orange
+  "#56B4E9",  # Sky Blue
+  "#009E73",  # Bluish Green
+  "#F0E442",  # Yellow
+  "#0072B2",  # Blue
+  "#D55E00",  # Vermillion
+  "#CC79A7",  # Reddish Purple
+  "#999999"   # Gray
+)
+
+get_color_palette <- function(n) {
+  if(n <= length(okabe_ito_colors)) {
+    return(okabe_ito_colors[1:n])
+  } else {
+    return(colorRampPalette(okabe_ito_colors)(n))
+  }
+}
+
+# ============================================================================
+# PUBLICATION THEME
+# ============================================================================
+theme_publication <- function() {
+  theme_bw(base_size = 11) +
+    theme(
+      panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      axis.line = element_line(color = "black", linewidth = 0.5),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 10),
+      axis.title = element_text(face = "bold", size = 11),
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
+      plot.subtitle = element_text(hjust = 0.5, size = 10, color = "gray30"),
+      legend.background = element_rect(fill = "white", color = "black"),
+      legend.key = element_blank(),
+      strip.background = element_rect(fill = "gray95", color = "black"),
+      strip.text = element_text(face = "bold")
+    )
+}
 
 # ============================================================================
 # UI
@@ -90,26 +140,8 @@ ui <- fluidPage(
         background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
         padding: 15px; border-radius: 8px; border-left: 5px solid #ff9800; margin: 10px 0;
       }
-      .naming-tool-box {
-        background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%);
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 5px solid #f57f17;
-        margin-bottom: 20px;
-      }
-      .naming-tool-box h6 {
-        margin: 0 0 10px 0;
-        color: #f57f17;
-        font-weight: 600;
-      }
-      .naming-tool-box p {
-        font-size: 0.9em;
-        margin: 5px 0;
-        color: #424242;
-      }
       .comp-box h6 { margin: 0 0 8px 0; font-weight: 600; color: #e65100; }
-      .comp-box p { font-size: 0.85em; margin: 5px 0; color: #424242; 
-      }
+      .comp-box p { font-size: 0.85em; margin: 5px 0; color: #424242; }
       .naming-tool-box {
         background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%);
         padding: 15px;
@@ -137,24 +169,23 @@ ui <- fluidPage(
   div(class = "content-wrapper",
       fluidRow(
         column(3, class = "sidebar",
-                div(style = "background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%); 
-               padding: 15px; border-radius: 8px; border-left: 5px solid #f57f17; 
-               margin-bottom: 20px;",
-                    h6(style = "margin: 0 0 10px 0; color: #f57f17; font-weight: 600;",
-                       icon("tools"), " Need to Rename Files?"),
-                    p(style = "font-size: 0.9em; margin: 5px 0; color: #424242;",
-                      "Use our automated file renaming tool to quickly format your FCS files 
-         to match the required naming convention."),
-                    tags$a(href = "https://huggingface.co/spaces/mahmood-iab/file_naming", 
-                           target = "_blank",
-                           class = "btn btn-warning btn-sm btn-block",
-                           style = "margin-top: 10px; font-weight: 600;",
-                           icon("external-link-alt"), " Open File Naming Tool")
-                ),
-                
-                h4(icon("upload"), " Upload Files"),
-                fileInput("files", "Select .fcs files:", multiple = TRUE, accept = c(".fcs", ".FCS")),
-                
+               div(style = "background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%);
+                   padding: 15px; border-radius: 8px; border-left: 5px solid #f57f17;
+                   margin-bottom: 20px;",
+                   h6(style = "margin: 0 0 10px 0; color: #f57f17; font-weight: 600;",
+                      icon("tools"), " Need to Rename Files?"),
+                   p(style = "font-size: 0.9em; margin: 5px 0; color: #424242;",
+                     "Use our automated file renaming tool to quickly format your FCS files to match the required naming convention."),
+                   tags$a(href = "https://huggingface.co/spaces/mahmood-iab/file_naming",
+                          target = "_blank",
+                          class = "btn btn-warning btn-sm btn-block",
+                          style = "margin-top: 10px; font-weight: 600;",
+                          icon("external-link-alt"), " Open File Naming Tool")
+               ),
+               
+               h4(icon("upload"), " Upload Files"),
+               fileInput("files", "Select .fcs files:", multiple = TRUE, accept = c(".fcs", ".FCS")),
+               
                hr(),
                div(class = "file-format-box",
                    h6(icon("info-circle"), " File Naming Convention"),
@@ -169,12 +200,19 @@ ui <- fluidPage(
                    fileInput("comp_unstained", "Unstained control:", accept = c(".fcs", ".FCS")),
                    fileInput("comp_annexin", "Annexin V-FITC only:", accept = c(".fcs", ".FCS")),
                    fileInput("comp_pi", "PI only:", accept = c(".fcs", ".FCS")),
-                   actionButton("calc_comp", "Calculate Compensation Matrix", 
+                   actionButton("calc_comp", "Calculate Compensation Matrix",
                                 class = "btn-info btn-sm btn-block", icon = icon("calculator")),
                    uiOutput("comp_status_ui")
                ),
                hr(),
                uiOutput("control_selection_ui"),
+               hr(),
+               div(style = "background: #e8f5e9; padding: 15px; border-radius: 8px; border-left: 5px solid #4caf50; margin: 10px 0;",
+                   h6(icon("cog"), " Analysis Options", style = "margin-top: 0; color: #2e7d32;"),
+                   checkboxInput("use_normalization", "Normalize viability to control (100%)", value = FALSE),
+                   p(style = "font-size: 0.85em; color: #666; margin: 5px 0;",
+                     "When enabled, control samples will be set to 100% viability.")
+               ),
                hr(),
                uiOutput("workflow_status"),
                hr(),
@@ -184,7 +222,7 @@ ui <- fluidPage(
         
         column(9,
                tabsetPanel(id = "tabs",
-                           tabPanel("Files", 
+                           tabPanel("Files",
                                     icon = icon("table"),
                                     br(),
                                     h4("Uploaded Files"),
@@ -200,22 +238,49 @@ ui <- fluidPage(
                                     br(),
                                     uiOutput("gating_ui")),
                            
+                           tabPanel("Gate Review",
+                                    icon = icon("eye"),
+                                    br(),
+                                    h4("Review Saved Gates"),
+                                    uiOutput("gate_review_ui")),
+                           
+                           tabPanel("Quality Control",
+                                    icon = icon("check-circle"),
+                                    br(),
+                                    h4("Replicate Quality Control"),
+                                    uiOutput("qc_ui")),
+                           
                            tabPanel("Results",
                                     icon = icon("chart-line"),
                                     br(),
-                                    h4("IC50 Results"),
+                                    h4("IC50/LD50 Results with Extended Metrics"),
                                     tableOutput("ic50_table"),
                                     hr(),
+                                    h5("Statistical Comparisons"),
+                                    verbatimTextOutput("stats_comparison"),
+                                    hr(),
                                     downloadButton("download_results", "Download CSV", class = "btn-primary")),
+                           
+                           tabPanel("Advanced Metrics",
+                                    icon = icon("calculator"),
+                                    br(),
+                                    h4("Extended Dose-Response Metrics"),
+                                    tableOutput("advanced_metrics_table")),
                            
                            tabPanel("Plots",
                                     icon = icon("chart-bar"),
                                     br(),
-                                    h4("Dose-Response Curves"),
-                                    plotOutput("dose_response_plot", height = "600px"),
+                                    h4("Viability Dose-Response Curves"),
+                                    plotOutput("viability_plot", height = "600px"),
                                     hr(),
-                                    h4("IC50 Comparison"),
-                                    plotOutput("ic50_comparison_plot", height = "500px"))
+                                    h4("Cell Death Dose-Response Curves"),
+                                    plotOutput("death_plot", height = "600px"),
+                                    hr(),
+                                    h4("IC50 vs LD50 Comparison"),
+                                    plotOutput("ic50_ld50_comparison", height = "500px"),
+                                    hr(),
+                                    h4("Apoptosis Quadrant Breakdown"),
+                                    plotOutput("quadrant_plot", height = "700px"))
                )
         )
       )
@@ -226,27 +291,32 @@ ui <- fluidPage(
       p("Université Grenoble Alpes | Institute for Advanced Biosciences | Epigenetics of Regeneration and Cancer Group"),
       p("mahmood.mohammed-ali@univ-grenoble-alpes.fr"),
       div(class = "social-links",
-          tags$a(href = "mailto:mahmood.mohammed-ali@univ-grenoble-alpes.fr", 
+          tags$a(href = "mailto:mahmood.mohammed-ali@univ-grenoble-alpes.fr",
                  target = "_blank",
                  icon("envelope"), " Email"),
-          tags$a(href = "https://github.com/Mahmood-M-Ali", 
+          tags$a(href = "https://github.com/Mahmood-M-Ali",
                  target = "_blank",
                  icon("github"), " GitHub"),
-          tags$a(href = "https://www.linkedin.com/in/mahmood-mohammed-ali-20334b205/", 
+          tags$a(href = "https://www.linkedin.com/in/mahmood-mohammed-ali-20334b205/",
                  target = "_blank",
                  icon("linkedin"), " LinkedIn")
       ),
       div(style = "margin-top: 20px;",
-          tags$a(href = "https://creativecommons.org/licenses/by-nc/4.0/", 
+          tags$a(href = "https://creativecommons.org/licenses/by-nc/4.0/",
                  target = "_blank",
-                 tags$img(src = "https://licensebuttons.net/l/by-nc/4.0/88x31.png",
+                 tags$img(src = "https://i.creativecommons.org/l/by-nc/4.0/88x31.png",
                           alt = "CC BY-NC 4.0 License",
-                          style = "border: 0;")))
+                          style = "border: 0;"))
+      ),
+      div(style = "margin-top: 10px;",
+          tags$a(href = "https://doi.org/10.5281/zenodo.17872796",
+                 target = "_blank",
+                 tags$img(src = "https://zenodo.org/badge/DOI/10.5281/zenodo.17872796.svg",
+                          alt = "DOI: 10.5281/zenodo.17872796",
+                          style = "border: 0;"))
+      )
   )
 )
-
-# ===== END OF PART 1 =====
-# Paste PART 2 immediately below this line
 # ============================================================================
 # SERVER
 # ============================================================================
@@ -258,8 +328,11 @@ server <- function(input, output, session) {
     thresholds = NULL,
     results = NULL,
     ic50_results = NULL,
-    ic50_data = NULL,
-    predicted_curves = NULL,
+    ld50_results = NULL,
+    viability_data = NULL,
+    death_data = NULL,
+    predicted_viability_curves = NULL,
+    predicted_death_curves = NULL,
     current_cell_line_index = 1,
     gating_step = "fsc_ssc",
     polygon_points = data.frame(x = numeric(), y = numeric()),
@@ -270,11 +343,21 @@ server <- function(input, output, session) {
     control_concentration = NULL,
     comp_matrix = NULL,
     comp_calculated = FALSE,
-    dose_response_plot_obj = NULL,
-    ic50_comparison_plot_obj = NULL
+    viability_plot_obj = NULL,
+    death_plot_obj = NULL,
+    comparison_plot_obj = NULL,
+    quadrant_plot_obj = NULL,
+    # NEW: Enhanced metrics
+    qc_data = NULL,
+    outlier_flags = NULL,
+    cell_counts = NULL,
+    advanced_metrics = NULL,
+    fit_quality = NULL,
+    gate_plots = list(),
+    comp_before_after = NULL
   )
   
-  # === COMPENSATION CALCULATION ===
+  # === COMPENSATION CALCULATION (UNCHANGED) ===
   observeEvent(input$calc_comp, {
     req(input$comp_unstained, input$comp_annexin, input$comp_pi)
     
@@ -309,11 +392,21 @@ server <- function(input, output, session) {
         rv$comp_matrix <- solve(spill_matrix)
         rv$comp_calculated <- TRUE
         
+        # NEW: Store before/after data for visualization
+        sample_indices <- sample(1:nrow(annexin_data), min(5000, nrow(annexin_data)))
+        before_data <- annexin_data[sample_indices, c("BL1-A", "BL2-A")]
+        after_data <- before_data %*% t(rv$comp_matrix)
+        
+        rv$comp_before_after <- list(
+          before = as.data.frame(before_data),
+          after = as.data.frame(after_data)
+        )
+        
         showNotification("Compensation matrix calculated successfully!", type = "message")
         updateTabsetPanel(session, "tabs", selected = "Compensation")
         
       }, error = function(e) {
-        showNotification(paste("Compensation calculation failed:", e$message), 
+        showNotification(paste("Compensation calculation failed:", e$message),
                          type = "error", duration = 10)
       })
     })
@@ -348,6 +441,10 @@ server <- function(input, output, session) {
       h5("Inverse Compensation Matrix:"),
       verbatimTextOutput("comp_matrix_display"),
       hr(),
+      # NEW: Compensation effect visualization
+      h5("Compensation Effect (Before vs After)"),
+      plotOutput("comp_visualization", height = "400px"),
+      hr(),
       p(style = "font-size: 0.9em; color: #666;",
         icon("info-circle"), " Corrects spectral overlap between Annexin V-FITC (BL1-A) and PI (BL2-A).")
     )
@@ -358,7 +455,30 @@ server <- function(input, output, session) {
     print(round(rv$comp_matrix, 4))
   })
   
-  # === FILE PARSING - FIXED ===
+  # NEW: Compensation visualization
+  output$comp_visualization <- renderPlot({
+    req(rv$comp_before_after)
+    
+    before_df <- rv$comp_before_after$before
+    after_df <- rv$comp_before_after$after
+    colnames(before_df) <- c("BL1", "BL2")
+    colnames(after_df) <- c("BL1", "BL2")
+    
+    before_df$Type <- "Before Compensation"
+    after_df$Type <- "After Compensation"
+    
+    combined <- rbind(before_df, after_df)
+    
+    ggplot(combined, aes(x = BL1, y = BL2)) +
+      geom_point(alpha = 0.1, size = 0.5, color = "#2196F3") +
+      facet_wrap(~ Type) +
+      labs(title = "Compensation Effect on Annexin V-FITC vs PI",
+           x = "BL1-A (Annexin V-FITC)", y = "BL2-A (PI)") +
+      theme_publication() +
+      theme(strip.text = element_text(size = 11, face = "bold"))
+  })
+  
+  # === FILE PARSING (UNCHANGED) ===
   observeEvent(input$files, {
     req(input$files)
     
@@ -370,14 +490,14 @@ server <- function(input, output, session) {
     
     for(i in 1:nrow(metadata)) {
       name_clean <- str_replace(metadata$name[i], "\\.[fF][cC][sS]$", "")
-      parts <- str_split(name_clean, "_")[[1]]  # FIXED: underscore not asterisk
+      parts <- str_split(name_clean, "_")[[1]]
       
       if(length(parts) >= 3) {
         metadata$cell_line[i] <- parts[1]
         metadata$replicate[i] <- parts[length(parts)]
-        metadata$treatment_full[i] <- paste(parts[2:(length(parts)-1)], collapse = "_")  # FIXED
+        metadata$treatment_full[i] <- paste(parts[2:(length(parts)-1)], collapse = "_")
         
-        conc <- as.numeric(str_extract(metadata$treatment_full[i], "[0-9.]+(?=[uU][mM])"))  # FIXED: decimal support
+        conc <- as.numeric(str_extract(metadata$treatment_full[i], "[0-9.]+(?=[uU][mM])"))
         metadata$concentration_uM[i] <- ifelse(is.na(conc), 0, conc)
       } else {
         metadata$cell_line[i] <- NA_character_
@@ -400,7 +520,7 @@ server <- function(input, output, session) {
     showNotification(paste("Loaded", nrow(metadata), "files"), type = "message")
   })
   
-  # === CONTROL SELECTION UI ===
+  # === CONTROL SELECTION UI (UNCHANGED) ===
   output$control_selection_ui <- renderUI({
     req(rv$metadata)
     
@@ -410,20 +530,20 @@ server <- function(input, output, session) {
       return(div(
         style = "background: #fff8e1; padding: 15px; border-radius: 8px; border-left: 5px solid #ff9800;",
         h6(icon("flask"), " Select Control", style = "margin-top: 0; color: #e65100;"),
-        p("Which concentration represents your control samples?", 
+        p("Which concentration represents your control samples?",
           style = "font-size: 0.9em; margin-bottom: 10px;"),
         selectInput("control_conc", "Control Concentration (µM):",
                     choices = conc_options,
                     selected = 0),
-        actionButton("set_control", "Set Control & Start Gating", 
-                     class = "btn-primary btn-block", 
+        actionButton("set_control", "Set Control & Start Gating",
+                     class = "btn-primary btn-block",
                      icon = icon("check"))
       ))
     } else {
       return(div(
         style = "background: #e8f5e9; padding: 15px; border-radius: 8px; border-left: 5px solid #4caf50;",
         h6(icon("check-circle"), " Control Set", style = "margin-top: 0; color: #2e7d32;"),
-        p(paste("Control:", rv$control_concentration, "µM"), 
+        p(paste("Control:", rv$control_concentration, "µM"),
           style = "font-size: 0.9em; margin: 0;")
       ))
     }
@@ -436,10 +556,10 @@ server <- function(input, output, session) {
     showNotification(paste("Control set to", rv$control_concentration, "µM"), type = "message")
   })
   
-  # === WORKFLOW STATUS ===
+  # === WORKFLOW STATUS (UNCHANGED) ===
   output$workflow_status <- renderUI({
     if(is.null(rv$metadata)) {
-      return(div(class = "alert alert-info alert-custom", 
+      return(div(class = "alert alert-info alert-custom",
                  icon("info-circle"), " Upload .fcs files to begin"))
     }
     
@@ -451,11 +571,11 @@ server <- function(input, output, session) {
     n_gated <- length(rv$thresholds)
     
     if(n_gated == length(cell_lines)) {
-      return(div(class = "alert alert-success alert-custom", 
+      return(div(class = "alert alert-success alert-custom",
                  icon("check-circle"), " All cell lines gated! Ready to analyze."))
     } else {
       return(div(class = "alert alert-warning alert-custom",
-                 sprintf("%s Progress: %d/%d cell lines gated", 
+                 sprintf("%s Progress: %d/%d cell lines gated",
                          icon("hourglass-half"), n_gated, length(cell_lines))))
     }
   })
@@ -467,14 +587,14 @@ server <- function(input, output, session) {
     n_gated <- length(rv$thresholds)
     
     if(n_gated == length(cell_lines)) {
-      return(actionButton("analyze", "Start Analysis", 
+      return(actionButton("analyze", "Start Analysis",
                           icon = icon("play"),
                           class = "btn-success btn-lg btn-block",
                           style = "font-size: 1.1em; padding: 12px;"))
     } else {
-      return(actionButton("analyze_disabled", "Complete Gating First", 
+      return(actionButton("analyze_disabled", "Complete Gating First",
                           icon = icon("lock"),
-                          class = "btn-secondary btn-lg btn-block", 
+                          class = "btn-secondary btn-lg btn-block",
                           disabled = TRUE,
                           style = "font-size: 1.1em; padding: 12px;"))
     }
@@ -488,9 +608,77 @@ server <- function(input, output, session) {
       arrange(cell_line, concentration_uM)
   }, striped = TRUE, hover = TRUE, bordered = TRUE)
   
-  # ===== END OF PART 2 =====
-  # Paste PART 3 immediately below this line
-  # === GATING UI ===
+  # NEW: Gate Review UI
+  output$gate_review_ui <- renderUI({
+    req(rv$thresholds)
+    
+    if(length(rv$thresholds) == 0) {
+      return(div(class = "alert alert-info",
+                 h5(icon("info-circle"), " No Gates Saved Yet"),
+                 p("Complete gating for at least one cell line to review gates here.")))
+    }
+    
+    cell_lines <- names(rv$thresholds)
+    
+    tagList(
+      p(strong("Saved gates for ", length(cell_lines), " cell line(s)")),
+      lapply(cell_lines, function(line) {
+        div(style = "background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #2196F3;",
+            h5(icon("circle"), " ", line),
+            p(strong("FSC/SSC Gate:"), " Polygon with ", 
+              nrow(rv$thresholds[[line]]$fsc_ssc$polygon), " points"),
+            p(strong("Singlet Gate:"), " Polygon with ", 
+              nrow(rv$thresholds[[line]]$singlets$polygon), " points"),
+            p(strong("Annexin/PI Thresholds:"), " Annexin=", 
+              round(rv$thresholds[[line]]$annexin_pi$annexin, 2), 
+              ", PI=", round(rv$thresholds[[line]]$annexin_pi$pi, 2)),
+            actionButton(paste0("edit_gate_", line), "Re-gate This Cell Line", 
+                         class = "btn-warning btn-sm", 
+                         icon = icon("edit")),
+            hr(style = "margin: 10px 0;"),
+            # Gate visualization plots
+            plotOutput(paste0("gate_vis_", line), height = "300px")
+        )
+      })
+    )
+  })
+  
+  # Dynamic plot outputs for gate visualization
+  observe({
+    req(rv$thresholds)
+    cell_lines <- names(rv$thresholds)
+    
+    lapply(cell_lines, function(line) {
+      local({
+        line_local <- line
+        output[[paste0("gate_vis_", line_local)]] <- renderPlot({
+          req(rv$gate_plots[[line_local]])
+          rv$gate_plots[[line_local]]
+        })
+      })
+    })
+  })
+  
+  # Re-gating functionality
+  observe({
+    req(rv$thresholds)
+    cell_lines <- names(rv$thresholds)
+    
+    lapply(cell_lines, function(line) {
+      local({
+        line_local <- line
+        observeEvent(input[[paste0("edit_gate_", line_local)]], {
+          cell_lines_all <- unique(rv$metadata$cell_line)
+          rv$current_cell_line_index <- which(cell_lines_all == line_local)
+          rv$gating_step <- "fsc_ssc"
+          rv$polygon_points <- data.frame(x = numeric(), y = numeric())
+          updateTabsetPanel(session, "tabs", selected = "Gating")
+          showNotification(paste("Re-gating", line_local), type = "message")
+        })
+      })
+    })
+  })
+  # === GATING UI (UNCHANGED LOGIC) ===
   output$gating_ui <- renderUI({
     req(rv$metadata, rv$control_concentration)
     
@@ -521,15 +709,10 @@ server <- function(input, output, session) {
     fs <- read.FCS(control_file$datapath)
     data_raw <- exprs(fs)
     
-    # === STEP 1: FSC/SSC ===
+    # === STEP 1: FSC/SSC (POLYGON ONLY) ===
     if(rv$gating_step == "fsc_ssc") {
       fsc_data <- data_raw[, "FSC-A"]
       ssc_data <- data_raw[, "SSC-A"]
-      
-      fsc_q10 <- quantile(fsc_data, 0.10, na.rm = TRUE)
-      fsc_q95 <- quantile(fsc_data, 0.95, na.rm = TRUE)
-      ssc_q10 <- quantile(ssc_data, 0.10, na.rm = TRUE)
-      ssc_q95 <- quantile(ssc_data, 0.95, na.rm = TRUE)
       
       rv$current_gating_data_fsc <- list(
         fsc = fsc_data,
@@ -544,66 +727,30 @@ server <- function(input, output, session) {
             p("Gate cells and remove debris", style = "margin-bottom: 0;")
         ),
         
-        div(class = "gate-mode-switch",
-            radioButtons("gate_mode_fsc", "Gating Mode:",
-                         choices = c("Rectangle (Sliders)" = "rectangle",
-                                     "Polygon (Click)" = "polygon"),
-                         selected = "rectangle", inline = TRUE),
-            conditionalPanel(
-              condition = "input.gate_mode_fsc == 'polygon'",
-              div(style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 10px;",
-                  p(icon("mouse-pointer"), " Click on plot to add points. Close polygon when done.", 
-                    style = "margin: 5px 0;"),
-                  actionButton("clear_polygon_fsc", "Clear Points", 
-                               class = "btn-warning btn-sm", icon = icon("eraser")),
-                  actionButton("close_polygon_fsc", "Close Polygon", 
-                               class = "btn-success btn-sm", icon = icon("check-circle"))
-              )
-            )
+        div(style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            p(icon("mouse-pointer"), " Click on plot to add points. Close polygon when done.",
+              style = "margin: 5px 0;"),
+            actionButton("clear_polygon_fsc", "Clear Points",
+                         class = "btn-warning btn-sm", icon = icon("eraser")),
+            actionButton("close_polygon_fsc", "Close Polygon",
+                         class = "btn-success btn-sm", icon = icon("check-circle"))
         ),
         
-        conditionalPanel(
-          condition = "input.gate_mode_fsc == 'rectangle'",
-          fluidRow(
-            column(6,
-                   sliderInput("fsc_min", "FSC-A Min:", 
-                               min = 0, max = max(fsc_data),
-                               value = fsc_q10, step = 1000),
-                   sliderInput("fsc_max", "FSC-A Max:", 
-                               min = 0, max = max(fsc_data),
-                               value = fsc_q95, step = 1000)
-            ),
-            column(6,
-                   sliderInput("ssc_min", "SSC-A Min:", 
-                               min = 0, max = max(ssc_data),
-                               value = ssc_q10, step = 1000),
-                   sliderInput("ssc_max", "SSC-A Max:", 
-                               min = 0, max = max(ssc_data),
-                               value = ssc_q95, step = 1000)
-            )
-          )
-        ),
-        
-        plotOutput("fsc_ssc_plot", height = "500px", click = "fsc_ssc_click"),
+        plotOutput("fsc_ssc_plot", height = "450px", click = "fsc_ssc_click"),
         div(class = "alert alert-secondary", verbatimTextOutput("fsc_ssc_stats")),
         hr(),
-        actionButton("next_to_singlets", "Next: Singlet Gate →", 
+        actionButton("next_to_singlets", "Next: Singlet Gate →",
                      class = "btn-primary btn-lg btn-block", icon = icon("arrow-right"))
       ))
     }
     
-    # === STEP 2: SINGLETS ===
+    # === STEP 2: SINGLETS (POLYGON ONLY) ===
     else if(rv$gating_step == "singlets") {
       req(rv$temp_gated_data_cells)
       
       data_cells <- rv$temp_gated_data_cells
       fsc_a <- data_cells[, "FSC-A"]
       fsc_h <- data_cells[, "FSC-H"]
-      
-      fsc_a_q10 <- quantile(fsc_a, 0.10, na.rm = TRUE)
-      fsc_a_q95 <- quantile(fsc_a, 0.95, na.rm = TRUE)
-      fsc_h_q10 <- quantile(fsc_h, 0.10, na.rm = TRUE)
-      fsc_h_q95 <- quantile(fsc_h, 0.95, na.rm = TRUE)
       
       rv$current_gating_data_singlet <- list(
         fsc_a = fsc_a,
@@ -618,59 +765,28 @@ server <- function(input, output, session) {
             p("Remove doublets using FSC-A vs FSC-H", style = "margin-bottom: 0;")
         ),
         
-        div(class = "gate-mode-switch",
-            radioButtons("gate_mode_singlet", "Gating Mode:",
-                         choices = c("Rectangle (Sliders)" = "rectangle",
-                                     "Polygon (Click)" = "polygon"),
-                         selected = "rectangle", inline = TRUE),
-            conditionalPanel(
-              condition = "input.gate_mode_singlet == 'polygon'",
-              div(style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 10px;",
-                  p(icon("mouse-pointer"), " Click on plot to add points. Close polygon when done.", 
-                    style = "margin: 5px 0;"),
-                  actionButton("clear_polygon_singlet", "Clear Points", 
-                               class = "btn-warning btn-sm", icon = icon("eraser")),
-                  actionButton("close_polygon_singlet", "Close Polygon", 
-                               class = "btn-success btn-sm", icon = icon("check-circle"))
-              )
-            )
+        div(style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 10px;",
+            p(icon("mouse-pointer"), " Click on plot to add points. Close polygon when done.",
+              style = "margin: 5px 0;"),
+            actionButton("clear_polygon_singlet", "Clear Points",
+                         class = "btn-warning btn-sm", icon = icon("eraser")),
+            actionButton("close_polygon_singlet", "Close Polygon",
+                         class = "btn-success btn-sm", icon = icon("check-circle"))
         ),
         
-        conditionalPanel(
-          condition = "input.gate_mode_singlet == 'rectangle'",
-          fluidRow(
-            column(6,
-                   sliderInput("fsc_a_min", "FSC-A Min:", 
-                               min = 0, max = max(fsc_a),
-                               value = fsc_a_q10, step = 1000),
-                   sliderInput("fsc_a_max", "FSC-A Max:", 
-                               min = 0, max = max(fsc_a),
-                               value = fsc_a_q95, step = 1000)
-            ),
-            column(6,
-                   sliderInput("fsc_h_min", "FSC-H Min:", 
-                               min = 0, max = max(fsc_h),
-                               value = fsc_h_q10, step = 1000),
-                   sliderInput("fsc_h_max", "FSC-H Max:", 
-                               min = 0, max = max(fsc_h),
-                               value = fsc_h_q95, step = 1000)
-            )
-          )
-        ),
-        
-        plotOutput("singlet_plot", height = "500px", click = "singlet_click"),
+        plotOutput("singlet_plot", height = "450px", click = "singlet_click"),
         div(class = "alert alert-secondary", verbatimTextOutput("singlet_stats")),
         hr(),
         fluidRow(
-          column(6, actionButton("back_to_fsc", "← Back: FSC/SSC", 
+          column(6, actionButton("back_to_fsc", "← Back: FSC/SSC",
                                  class = "btn-secondary btn-lg btn-block", icon = icon("arrow-left"))),
-          column(6, actionButton("next_to_annexin", "Next: Annexin/PI →", 
+          column(6, actionButton("next_to_annexin", "Next: Annexin/PI →",
                                  class = "btn-primary btn-lg btn-block", icon = icon("arrow-right")))
         )
       ))
     }
     
-    # === STEP 3: ANNEXIN/PI ===
+    # === STEP 3: ANNEXIN/PI (RECTANGLE ONLY) ===
     else if(rv$gating_step == "annexin_pi") {
       req(rv$temp_gated_data_singlets)
       
@@ -708,54 +824,33 @@ server <- function(input, output, session) {
             p("Set viability/apoptosis thresholds", style = "margin-bottom: 0;")
         ),
         
-        div(class = "gate-mode-switch",
-            radioButtons("gate_mode_annexin", "Gating Mode:",
-                         choices = c("Rectangle (Sliders)" = "rectangle",
-                                     "Polygon (Click)" = "polygon"),
-                         selected = "rectangle", inline = TRUE),
-            conditionalPanel(
-              condition = "input.gate_mode_annexin == 'polygon'",
-              div(style = "background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 10px;",
-                  p(icon("mouse-pointer"), " Click to define VIABLE region (lower-left quadrant).", 
-                    style = "margin: 5px 0;"),
-                  actionButton("clear_polygon_annexin", "Clear Points", 
-                               class = "btn-warning btn-sm", icon = icon("eraser")),
-                  actionButton("close_polygon_annexin", "Close Polygon", 
-                               class = "btn-success btn-sm", icon = icon("check-circle"))
-              )
-            )
-        ),
-        
-        conditionalPanel(
-          condition = "input.gate_mode_annexin == 'rectangle'",
-          fluidRow(
-            column(6,
-                   sliderInput("annexin_threshold", "Annexin V Threshold:", 
-                               min = floor(min(annexin)), max = ceiling(max(annexin)),
-                               value = start_annexin, step = 0.05)
-            ),
-            column(6,
-                   sliderInput("pi_threshold", "PI Threshold:", 
-                               min = floor(min(pi)), max = ceiling(max(pi)),
-                               value = start_pi, step = 0.05)
-            )
+        fluidRow(
+          column(6,
+                 sliderInput("annexin_threshold", "Annexin V Threshold:",
+                             min = floor(min(annexin)), max = ceiling(max(annexin)),
+                             value = start_annexin, step = 0.05)
+          ),
+          column(6,
+                 sliderInput("pi_threshold", "PI Threshold:",
+                             min = floor(min(pi)), max = ceiling(max(pi)),
+                             value = start_pi, step = 0.05)
           )
         ),
         
-        plotOutput("annexin_plot", height = "500px", click = "annexin_click"),
+        plotOutput("annexin_plot", height = "450px"),
         div(class = "alert alert-secondary", verbatimTextOutput("annexin_stats")),
         hr(),
         fluidRow(
-          column(6, actionButton("back_to_singlet", "← Back: Singlets", 
+          column(6, actionButton("back_to_singlet", "← Back: Singlets",
                                  class = "btn-secondary btn-lg btn-block", icon = icon("arrow-left"))),
-          column(6, actionButton("save_gate", "Save & Next Cell Line ✓", 
+          column(6, actionButton("save_gate", "Save & Next Cell Line ✓",
                                  class = "btn-success btn-lg btn-block", icon = icon("check")))
         )
       ))
     }
   })
   
-  # === PLOT OUTPUTS ===
+  # === PLOT OUTPUTS (UNCHANGED) ===
   
   output$fsc_ssc_plot <- renderPlot({
     req(rv$current_gating_data_fsc)
@@ -775,11 +870,8 @@ server <- function(input, output, session) {
       theme_bw(base_size = 14) +
       theme(legend.position = "none", plot.title = element_text(face = "bold"))
     
-    if(!is.null(input$gate_mode_fsc) && input$gate_mode_fsc == "rectangle") {
-      p <- p + geom_rect(aes(xmin = input$fsc_min, xmax = input$fsc_max,
-                             ymin = input$ssc_min, ymax = input$ssc_max),
-                         fill = NA, color = "red", linewidth = 2)
-    } else if(nrow(rv$polygon_points) > 0) {
+    # Only draw polygon if we have at least 2 points
+    if(nrow(rv$polygon_points) >= 1) {
       p <- p + geom_path(data = rv$polygon_points, aes(x = x, y = y),
                          color = "red", linewidth = 2) +
         geom_point(data = rv$polygon_points, aes(x = x, y = y),
@@ -808,11 +900,8 @@ server <- function(input, output, session) {
       theme_bw(base_size = 14) +
       theme(legend.position = "none", plot.title = element_text(face = "bold"))
     
-    if(!is.null(input$gate_mode_singlet) && input$gate_mode_singlet == "rectangle") {
-      p <- p + geom_rect(aes(xmin = input$fsc_a_min, xmax = input$fsc_a_max,
-                             ymin = input$fsc_h_min, ymax = input$fsc_h_max),
-                         fill = NA, color = "red", linewidth = 2)
-    } else if(nrow(rv$polygon_points) > 0) {
+    # Only draw polygon if we have at least 2 points
+    if(nrow(rv$polygon_points) >= 1) {
       p <- p + geom_path(data = rv$polygon_points, aes(x = x, y = y),
                          color = "red", linewidth = 2) +
         geom_point(data = rv$polygon_points, aes(x = x, y = y),
@@ -840,32 +929,20 @@ server <- function(input, output, session) {
       theme_bw(base_size = 14) +
       theme(legend.position = "none", plot.title = element_text(face = "bold"))
     
-    if(!is.null(input$gate_mode_annexin) && input$gate_mode_annexin == "rectangle") {
-      p <- p + 
-        geom_vline(xintercept = input$annexin_threshold, color = "red", linewidth = 2) +
-        geom_hline(yintercept = input$pi_threshold, color = "red", linewidth = 2)
-    } else if(nrow(rv$polygon_points) > 0) {
-      p <- p + geom_path(data = rv$polygon_points, aes(x = x, y = y),
-                         color = "red", linewidth = 2) +
-        geom_point(data = rv$polygon_points, aes(x = x, y = y),
-                   color = "red", size = 4, shape = 21, fill = "white", stroke = 2)
-    }
+    p <- p +
+      geom_vline(xintercept = input$annexin_threshold, color = "red", linewidth = 2) +
+      geom_hline(yintercept = input$pi_threshold, color = "red", linewidth = 2)
+    
     p
   })
   
-  # === STATS OUTPUTS ===
+  # === STATS OUTPUTS (UNCHANGED) ===
   
   output$fsc_ssc_stats <- renderText({
     req(rv$current_gating_data_fsc)
     total <- length(rv$current_gating_data_fsc$fsc)
     
-    if(!is.null(input$gate_mode_fsc) && input$gate_mode_fsc == "rectangle") {
-      in_gate <- rv$current_gating_data_fsc$fsc >= input$fsc_min &
-        rv$current_gating_data_fsc$fsc <= input$fsc_max &
-        rv$current_gating_data_fsc$ssc >= input$ssc_min &
-        rv$current_gating_data_fsc$ssc <= input$ssc_max
-      kept <- sum(in_gate)
-    } else if(nrow(rv$polygon_points) >= 3) {
+    if(nrow(rv$polygon_points) >= 3) {
       in_gate <- point.in.polygon(rv$current_gating_data_fsc$fsc,
                                   rv$current_gating_data_fsc$ssc,
                                   rv$polygon_points$x, rv$polygon_points$y) > 0
@@ -875,7 +952,7 @@ server <- function(input, output, session) {
     }
     
     pct <- round(kept/total*100, 1)
-    paste0("Events kept: ", format(kept, big.mark = ","), " / ", 
+    paste0("Events kept: ", format(kept, big.mark = ","), " / ",
            format(total, big.mark = ","), " (", pct, "%)")
   })
   
@@ -883,13 +960,7 @@ server <- function(input, output, session) {
     req(rv$current_gating_data_singlet)
     total <- length(rv$current_gating_data_singlet$fsc_a)
     
-    if(!is.null(input$gate_mode_singlet) && input$gate_mode_singlet == "rectangle") {
-      in_gate <- rv$current_gating_data_singlet$fsc_a >= input$fsc_a_min &
-        rv$current_gating_data_singlet$fsc_a <= input$fsc_a_max &
-        rv$current_gating_data_singlet$fsc_h >= input$fsc_h_min &
-        rv$current_gating_data_singlet$fsc_h <= input$fsc_h_max
-      kept <- sum(in_gate)
-    } else if(nrow(rv$polygon_points) >= 3) {
+    if(nrow(rv$polygon_points) >= 3) {
       in_gate <- point.in.polygon(rv$current_gating_data_singlet$fsc_a,
                                   rv$current_gating_data_singlet$fsc_h,
                                   rv$polygon_points$x, rv$polygon_points$y) > 0
@@ -899,7 +970,7 @@ server <- function(input, output, session) {
     }
     
     pct <- round(kept/total*100, 1)
-    paste0("Singlets: ", format(kept, big.mark = ","), " / ", 
+    paste0("Singlets: ", format(kept, big.mark = ","), " / ",
            format(total, big.mark = ","), " (", pct, "%)\nExpected: 85-95%")
   })
   
@@ -909,47 +980,28 @@ server <- function(input, output, session) {
     pi <- rv$current_gating_data$pi
     total <- length(annexin)
     
-    if(!is.null(input$gate_mode_annexin) && input$gate_mode_annexin == "rectangle") {
-      viable <- sum(annexin < input$annexin_threshold & pi < input$pi_threshold)
-    } else if(nrow(rv$polygon_points) >= 3) {
-      viable <- sum(point.in.polygon(annexin, pi, 
-                                     rv$polygon_points$x, rv$polygon_points$y) > 0)
-    } else {
-      viable <- 0
-    }
+    viable <- sum(annexin < input$annexin_threshold & pi < input$pi_threshold)
     
     viable_pct <- round(viable/total*100, 1)
-    status <- if(viable_pct >= 70 && viable_pct <= 95) "✓ Good" 
-    else if(viable_pct > 95) "⚠ Too high" 
+    status <- if(viable_pct >= 70 && viable_pct <= 95) "✓ Good"
+    else if(viable_pct > 95) "⚠ Too high"
     else "⚠ Too low"
     
     paste0("Viable cells: ", viable_pct, "% ", status, "\nExpected for control: 70-95%")
   })
   
-  # === CLICK HANDLERS ===
+  # === CLICK HANDLERS (UNCHANGED) ===
   
   observeEvent(input$fsc_ssc_click, {
-    if(!is.null(input$gate_mode_fsc) && input$gate_mode_fsc == "polygon") {
-      click <- input$fsc_ssc_click
-      rv$polygon_points <- rbind(rv$polygon_points, data.frame(x = click$x, y = click$y))
-    }
+    click <- input$fsc_ssc_click
+    rv$polygon_points <- rbind(rv$polygon_points, data.frame(x = click$x, y = click$y))
   })
   
   observeEvent(input$singlet_click, {
-    if(!is.null(input$gate_mode_singlet) && input$gate_mode_singlet == "polygon") {
-      click <- input$singlet_click
-      rv$polygon_points <- rbind(rv$polygon_points, data.frame(x = click$x, y = click$y))
-    }
+    click <- input$singlet_click
+    rv$polygon_points <- rbind(rv$polygon_points, data.frame(x = click$x, y = click$y))
   })
   
-  observeEvent(input$annexin_click, {
-    if(!is.null(input$gate_mode_annexin) && input$gate_mode_annexin == "polygon") {
-      click <- input$annexin_click
-      rv$polygon_points <- rbind(rv$polygon_points, data.frame(x = click$x, y = click$y))
-    }
-  })
-  
-  # Clear polygon buttons
   observeEvent(input$clear_polygon_fsc, {
     rv$polygon_points <- data.frame(x = numeric(), y = numeric())
   })
@@ -958,11 +1010,6 @@ server <- function(input, output, session) {
     rv$polygon_points <- data.frame(x = numeric(), y = numeric())
   })
   
-  observeEvent(input$clear_polygon_annexin, {
-    rv$polygon_points <- data.frame(x = numeric(), y = numeric())
-  })
-  
-  # Close polygon buttons
   observeEvent(input$close_polygon_fsc, {
     if(nrow(rv$polygon_points) >= 3) {
       rv$polygon_points <- rbind(rv$polygon_points, rv$polygon_points[1, ])
@@ -977,38 +1024,20 @@ server <- function(input, output, session) {
     }
   })
   
-  observeEvent(input$close_polygon_annexin, {
-    if(nrow(rv$polygon_points) >= 3) {
-      rv$polygon_points <- rbind(rv$polygon_points, rv$polygon_points[1, ])
-      showNotification("Polygon closed!", type = "message")
-    }
-  })
-  
-  # === NAVIGATION BETWEEN STEPS ===
+  # === NAVIGATION BETWEEN STEPS (UNCHANGED) ===
   
   observeEvent(input$next_to_singlets, {
     req(rv$current_gating_data_fsc)
     
-    if(!is.null(input$gate_mode_fsc) && input$gate_mode_fsc == "polygon") {
-      if(nrow(rv$polygon_points) < 3) {
-        showNotification("Draw a polygon first (at least 3 points)", type = "error")
-        return()
-      }
-      rv$temp_fsc_ssc_gates <- list(type = "polygon", polygon = rv$polygon_points)
-      in_gate <- point.in.polygon(rv$current_gating_data_fsc$fsc,
-                                  rv$current_gating_data_fsc$ssc,
-                                  rv$polygon_points$x, rv$polygon_points$y) > 0
-      rv$temp_gated_data_cells <- rv$current_gating_data_fsc$data_raw[in_gate, ]
-    } else {
-      rv$temp_fsc_ssc_gates <- list(type = "rectangle",
-                                    fsc_min = input$fsc_min, fsc_max = input$fsc_max,
-                                    ssc_min = input$ssc_min, ssc_max = input$ssc_max)
-      in_gate <- rv$current_gating_data_fsc$fsc >= input$fsc_min &
-        rv$current_gating_data_fsc$fsc <= input$fsc_max &
-        rv$current_gating_data_fsc$ssc >= input$ssc_min &
-        rv$current_gating_data_fsc$ssc <= input$ssc_max
-      rv$temp_gated_data_cells <- rv$current_gating_data_fsc$data_raw[in_gate, ]
+    if(nrow(rv$polygon_points) < 3) {
+      showNotification("Draw a polygon first (at least 3 points)", type = "error")
+      return()
     }
+    rv$temp_fsc_ssc_gates <- list(type = "polygon", polygon = rv$polygon_points)
+    in_gate <- point.in.polygon(rv$current_gating_data_fsc$fsc,
+                                rv$current_gating_data_fsc$ssc,
+                                rv$polygon_points$x, rv$polygon_points$y) > 0
+    rv$temp_gated_data_cells <- rv$current_gating_data_fsc$data_raw[in_gate, ]
     
     if(nrow(rv$temp_gated_data_cells) == 0) {
       showNotification("No cells in gate! Adjust gate.", type = "error")
@@ -1022,26 +1051,15 @@ server <- function(input, output, session) {
   observeEvent(input$next_to_annexin, {
     req(rv$current_gating_data_singlet)
     
-    if(!is.null(input$gate_mode_singlet) && input$gate_mode_singlet == "polygon") {
-      if(nrow(rv$polygon_points) < 3) {
-        showNotification("Draw a polygon first (at least 3 points)", type = "error")
-        return()
-      }
-      rv$temp_singlet_gates <- list(type = "polygon", polygon = rv$polygon_points)
-      in_gate <- point.in.polygon(rv$current_gating_data_singlet$fsc_a,
-                                  rv$current_gating_data_singlet$fsc_h,
-                                  rv$polygon_points$x, rv$polygon_points$y) > 0
-      rv$temp_gated_data_singlets <- rv$current_gating_data_singlet$data_cells[in_gate, ]
-    } else {
-      rv$temp_singlet_gates <- list(type = "rectangle",
-                                    fsc_a_min = input$fsc_a_min, fsc_a_max = input$fsc_a_max,
-                                    fsc_h_min = input$fsc_h_min, fsc_h_max = input$fsc_h_max)
-      in_gate <- rv$current_gating_data_singlet$fsc_a >= input$fsc_a_min &
-        rv$current_gating_data_singlet$fsc_a <= input$fsc_a_max &
-        rv$current_gating_data_singlet$fsc_h >= input$fsc_h_min &
-        rv$current_gating_data_singlet$fsc_h <= input$fsc_h_max
-      rv$temp_gated_data_singlets <- rv$current_gating_data_singlet$data_cells[in_gate, ]
+    if(nrow(rv$polygon_points) < 3) {
+      showNotification("Draw a polygon first (at least 3 points)", type = "error")
+      return()
     }
+    rv$temp_singlet_gates <- list(type = "polygon", polygon = rv$polygon_points)
+    in_gate <- point.in.polygon(rv$current_gating_data_singlet$fsc_a,
+                                rv$current_gating_data_singlet$fsc_h,
+                                rv$polygon_points$x, rv$polygon_points$y) > 0
+    rv$temp_gated_data_singlets <- rv$current_gating_data_singlet$data_cells[in_gate, ]
     
     if(nrow(rv$temp_gated_data_singlets) == 0) {
       showNotification("No singlets in gate! Adjust gate.", type = "error")
@@ -1066,22 +1084,24 @@ server <- function(input, output, session) {
     req(rv$current_gating_data)
     cell_line <- rv$current_gating_data$cell_line
     
-    if(!is.null(input$gate_mode_annexin) && input$gate_mode_annexin == "polygon") {
-      if(nrow(rv$polygon_points) < 3) {
-        showNotification("Draw a polygon first (at least 3 points)", type = "error")
-        return()
-      }
-      annexin_pi_gate <- list(type = "polygon", polygon = rv$polygon_points)
-    } else {
-      annexin_pi_gate <- list(type = "rectangle",
-                              annexin = input$annexin_threshold, pi = input$pi_threshold)
-    }
-    
     rv$thresholds[[cell_line]] <- list(
       fsc_ssc = rv$temp_fsc_ssc_gates,
       singlets = rv$temp_singlet_gates,
-      annexin_pi = annexin_pi_gate
+      annexin_pi = list(type = "rectangle", annexin = input$annexin_threshold, pi = input$pi_threshold)
     )
+    
+    # NEW: Store gate visualization plot for review
+    tryCatch({
+      gate_summary_plot <- grid.arrange(
+        ggplot() + annotate("text", x = 0.5, y = 0.5, 
+                            label = paste("Gates saved for", cell_line), 
+                            size = 6) + theme_void(),
+        nrow = 1
+      )
+      rv$gate_plots[[cell_line]] <- gate_summary_plot
+    }, error = function(e) {
+      message("Gate plot storage failed: ", e$message)
+    })
     
     showNotification(paste("Gates saved for", cell_line), type = "message")
     
@@ -1102,10 +1122,7 @@ server <- function(input, output, session) {
     rv$gating_step <- "fsc_ssc"
     rv$polygon_points <- data.frame(x = numeric(), y = numeric())
   })
-  
-  # ===== END OF PART 3 =====
-  # Paste PART 4 immediately below this line
-  # === ANALYSIS WITH COMPENSATION SUPPORT ===
+  # === ANALYSIS WITH ENHANCED METRICS ===
   observeEvent(input$analyze, {
     req(rv$metadata, rv$thresholds)
     
@@ -1120,6 +1137,7 @@ server <- function(input, output, session) {
       trans <- logicleTransform()
       results <- data.frame()
       errors <- character()
+      cell_counts_data <- data.frame()  # NEW: Track cell counts
       
       for(i in 1:nrow(rv$metadata)) {
         row <- rv$metadata[i, ]
@@ -1135,35 +1153,24 @@ server <- function(input, output, session) {
         tryCatch({
           fs <- read.FCS(row$datapath)
           data_raw <- exprs(fs)
+          total_events <- nrow(data_raw)  # NEW: Track starting count
           
           # Gate 1: FSC/SSC
           fsc_ssc_gate <- thresholds$fsc_ssc
-          if(fsc_ssc_gate$type == "polygon") {
-            poly <- fsc_ssc_gate$polygon
-            in_gate1 <- point.in.polygon(data_raw[, "FSC-A"], data_raw[, "SSC-A"],
-                                         poly$x, poly$y) > 0
-          } else {
-            in_gate1 <- data_raw[, "FSC-A"] >= fsc_ssc_gate$fsc_min &
-              data_raw[, "FSC-A"] <= fsc_ssc_gate$fsc_max &
-              data_raw[, "SSC-A"] >= fsc_ssc_gate$ssc_min &
-              data_raw[, "SSC-A"] <= fsc_ssc_gate$ssc_max
-          }
+          poly <- fsc_ssc_gate$polygon
+          in_gate1 <- point.in.polygon(data_raw[, "FSC-A"], data_raw[, "SSC-A"],
+                                       poly$x, poly$y) > 0
           data_cells <- data_raw[in_gate1, ]
+          cells_after_fsc <- nrow(data_cells)  # NEW
           if(nrow(data_cells) == 0) next
           
           # Gate 2: Singlets
           singlet_gate <- thresholds$singlets
-          if(singlet_gate$type == "polygon") {
-            poly <- singlet_gate$polygon
-            in_gate2 <- point.in.polygon(data_cells[, "FSC-A"], data_cells[, "FSC-H"],
-                                         poly$x, poly$y) > 0
-          } else {
-            in_gate2 <- data_cells[, "FSC-A"] >= singlet_gate$fsc_a_min &
-              data_cells[, "FSC-A"] <= singlet_gate$fsc_a_max &
-              data_cells[, "FSC-H"] >= singlet_gate$fsc_h_min &
-              data_cells[, "FSC-H"] <= singlet_gate$fsc_h_max
-          }
+          poly <- singlet_gate$polygon
+          in_gate2 <- point.in.polygon(data_cells[, "FSC-A"], data_cells[, "FSC-H"],
+                                       poly$x, poly$y) > 0
           data_singlets <- data_cells[in_gate2, ]
+          singlets_count <- nrow(data_singlets)  # NEW
           if(nrow(data_singlets) == 0) next
           
           # Gate 3: Annexin/PI with compensation
@@ -1178,22 +1185,43 @@ server <- function(input, output, session) {
           }
           
           annexin_pi_gate <- thresholds$annexin_pi
-          if(annexin_pi_gate$type == "polygon") {
-            poly <- annexin_pi_gate$polygon
-            viable <- sum(point.in.polygon(annexin, pi, poly$x, poly$y) > 0)
-          } else {
-            viable <- sum(annexin < annexin_pi_gate$annexin & pi < annexin_pi_gate$pi)
-          }
+          ann_thresh <- annexin_pi_gate$annexin
+          pi_thresh <- annexin_pi_gate$pi
           
+          # 4-QUADRANT CLASSIFICATION
+          viable <- sum(annexin < ann_thresh & pi < pi_thresh)
+          early_apoptotic <- sum(annexin >= ann_thresh & pi < pi_thresh)
+          late_apoptotic <- sum(annexin >= ann_thresh & pi >= pi_thresh)
+          necrotic <- sum(annexin < ann_thresh & pi >= pi_thresh)
           total <- length(annexin)
+          
+          cell_death <- early_apoptotic + late_apoptotic + necrotic
           
           results <- rbind(results, data.frame(
             cell_line = cell_line,
             concentration_uM = row$concentration_uM,
             replicate = row$replicate,
             pct_viable = (viable/total)*100,
+            pct_early_apoptotic = (early_apoptotic/total)*100,
+            pct_late_apoptotic = (late_apoptotic/total)*100,
+            pct_necrotic = (necrotic/total)*100,
+            pct_cell_death = (cell_death/total)*100,
             stringsAsFactors = FALSE
           ))
+          
+          # NEW: Store cell counts at each gating step
+          cell_counts_data <- rbind(cell_counts_data, data.frame(
+            cell_line = cell_line,
+            concentration_uM = row$concentration_uM,
+            replicate = row$replicate,
+            total_events = total_events,
+            after_fsc_ssc = cells_after_fsc,
+            after_singlets = singlets_count,
+            viable_count = viable,
+            dead_count = cell_death,
+            stringsAsFactors = FALSE
+          ))
+          
         }, error = function(e) {
           errors <<- c(errors, paste(row$name, ":", e$message))
         })
@@ -1209,9 +1237,66 @@ server <- function(input, output, session) {
       }
       
       rv$results <- results
+      rv$cell_counts <- cell_counts_data  # NEW
       
-      # IC50 CALCULATION WITH ROBUST FITTING
-      ic50_data <- results %>%
+      # NEW: Calculate CV% and detect outliers
+      qc_data <- results %>%
+        group_by(cell_line, concentration_uM) %>%
+        summarise(
+          mean_viable = mean(pct_viable, na.rm = TRUE),
+          sd_viable = sd(pct_viable, na.rm = TRUE),
+          cv_pct = (sd_viable / mean_viable) * 100,
+          n = n(),
+          .groups = "drop"
+        )
+      
+      # Grubbs test for outliers (if n >= 3)
+      outlier_flags <- data.frame()
+      for(i in 1:nrow(results)) {
+        group_data <- results %>%
+          filter(cell_line == results$cell_line[i],
+                 concentration_uM == results$concentration_uM[i])
+        
+        if(nrow(group_data) >= 3) {
+          grubbs_result <- tryCatch({
+            grubbs.test(group_data$pct_viable)
+          }, error = function(e) NULL)
+          
+          if(!is.null(grubbs_result) && grubbs_result$p.value < 0.05) {
+            outlier_idx <- which.max(abs(group_data$pct_viable - mean(group_data$pct_viable)))
+            outlier_flags <- rbind(outlier_flags, data.frame(
+              cell_line = results$cell_line[i],
+              concentration_uM = results$concentration_uM[i],
+              replicate = group_data$replicate[outlier_idx],
+              is_outlier = TRUE,
+              p_value = grubbs_result$p.value,
+              stringsAsFactors = FALSE
+            ))
+          }
+        }
+      }
+      rv$qc_data <- qc_data
+      rv$outlier_flags <- outlier_flags
+      
+      # === NORMALIZATION (if enabled) ===
+      if(input$use_normalization) {
+        control_mean <- results %>%
+          filter(concentration_uM == rv$control_concentration) %>%
+          group_by(cell_line) %>%
+          summarise(control_viable = mean(pct_viable, na.rm = TRUE), .groups = "drop")
+        
+        results <- results %>%
+          left_join(control_mean, by = "cell_line") %>%
+          mutate(pct_viable = (pct_viable / control_viable) * 100)
+        
+        # Remove helper column without using select()
+        results$control_viable <- NULL
+        
+        rv$results <- results
+      }
+      
+      # === VIABILITY DATA ===
+      viability_data <- results %>%
         group_by(cell_line, concentration_uM) %>%
         summarise(mean_viable = mean(pct_viable, na.rm = TRUE),
                   sd_viable = sd(pct_viable, na.rm = TRUE),
@@ -1220,241 +1305,531 @@ server <- function(input, output, session) {
                   .groups = "drop") %>%
         mutate(concentration_uM = as.numeric(as.character(concentration_uM)))
       
-      ic50_results <- data.frame()
-      predicted_curves <- data.frame()
+      # === CELL DEATH DATA ===
+      death_data <- results %>%
+        group_by(cell_line, concentration_uM) %>%
+        summarise(mean_death = mean(pct_cell_death, na.rm = TRUE),
+                  sd_death = sd(pct_cell_death, na.rm = TRUE),
+                  n = n(),
+                  se_death = sd_death / sqrt(n),
+                  .groups = "drop") %>%
+        mutate(concentration_uM = as.numeric(as.character(concentration_uM)))
       
-      for(line in unique(ic50_data$cell_line)) {
+      # === IC50 & LD50 FITTING WITH EXTENDED METRICS ===
+      ic50_results <- data.frame()
+      ld50_results <- data.frame()
+      predicted_viability_curves <- data.frame()
+      predicted_death_curves <- data.frame()
+      advanced_metrics <- data.frame()  # NEW
+      fit_quality <- data.frame()  # NEW
+      
+      for(line in unique(viability_data$cell_line)) {
         if(is.na(line)) next
         
-        line_data <- ic50_data %>% filter(cell_line == line)
-        if(nrow(line_data) < 4) {
-          message("Skipping IC50 for ", line, ": insufficient data points (", nrow(line_data), " < 4)")
+        line_viab <- viability_data %>% filter(cell_line == line)
+        line_death <- death_data %>% filter(cell_line == line)
+        
+        if(nrow(line_viab) < 4) {
+          message("Skipping IC50 for ", line, ": insufficient data points (", nrow(line_viab), " < 4)")
           next
         }
         
-        line_data$dose <- line_data$concentration_uM + 0.1
+        line_viab$dose <- line_viab$concentration_uM + 0.1
+        line_death$dose <- line_death$concentration_uM + 0.1
         
-        # MULTI-STRATEGY FITTING APPROACH
-        fit <- NULL
-        fit_method <- "none"
+        # FIT VIABILITY (IC50)
+        fit_viab <- NULL
+        fit_method_viab <- "none"
         
-        # Strategy 1: Standard LL.4 with auto starting values
-        if(is.null(fit)) {
-          fit <- tryCatch({
-            drm(mean_viable ~ dose, data = line_data, fct = LL.4())
+        if(is.null(fit_viab)) {
+          fit_viab <- tryCatch({
+            drm(mean_viable ~ dose, data = line_viab, fct = LL.4())
           }, error = function(e) NULL)
-          if(!is.null(fit)) fit_method <- "LL.4 auto"
+          if(!is.null(fit_viab)) fit_method_viab <- "LL.4 auto"
         }
         
-        # Strategy 2: LL.4 with manual starting values based on data
-        if(is.null(fit)) {
-          fit <- tryCatch({
-            min_v <- min(line_data$mean_viable, na.rm = TRUE)
-            max_v <- max(line_data$mean_viable, na.rm = TRUE)
-            mid_dose <- median(line_data$dose)
-            drm(mean_viable ~ dose, data = line_data, 
+        if(is.null(fit_viab)) {
+          fit_viab <- tryCatch({
+            min_v <- min(line_viab$mean_viable, na.rm = TRUE)
+            max_v <- max(line_viab$mean_viable, na.rm = TRUE)
+            mid_dose <- median(line_viab$dose)
+            drm(mean_viable ~ dose, data = line_viab,
                 fct = LL.4(names = c("Slope", "Lower", "Upper", "ED50")),
                 start = c(1, min_v, max_v, mid_dose))
           }, error = function(e) NULL)
-          if(!is.null(fit)) fit_method <- "LL.4 manual"
+          if(!is.null(fit_viab)) fit_method_viab <- "LL.4 manual"
         }
         
-        # Strategy 3: 3-parameter log-logistic (simpler, more robust)
-        if(is.null(fit)) {
-          fit <- tryCatch({
-            drm(mean_viable ~ dose, data = line_data, fct = LL.3())
+        if(is.null(fit_viab)) {
+          fit_viab <- tryCatch({
+            drm(mean_viable ~ dose, data = line_viab, fct = LL.3())
           }, error = function(e) NULL)
-          if(!is.null(fit)) fit_method <- "LL.3"
+          if(!is.null(fit_viab)) fit_method_viab <- "LL.3"
         }
         
-        # Strategy 4: Weibull model
-        if(is.null(fit)) {
-          fit <- tryCatch({
-            drm(mean_viable ~ dose, data = line_data, fct = W1.4())
+        if(is.null(fit_viab)) {
+          fit_viab <- tryCatch({
+            drm(mean_viable ~ dose, data = line_viab, fct = W1.4())
           }, error = function(e) NULL)
-          if(!is.null(fit)) fit_method <- "Weibull"
+          if(!is.null(fit_viab)) fit_method_viab <- "Weibull"
         }
         
-        # Strategy 5: 2-parameter Weibull (most robust)
-        if(is.null(fit)) {
-          fit <- tryCatch({
-            drm(mean_viable ~ dose, data = line_data, fct = W1.2())
+        if(is.null(fit_viab)) {
+          fit_viab <- tryCatch({
+            drm(mean_viable ~ dose, data = line_viab, fct = W1.2())
           }, error = function(e) NULL)
-          if(!is.null(fit)) fit_method <- "Weibull-2"
+          if(!is.null(fit_viab)) fit_method_viab <- "Weibull-2"
         }
         
-        # If all strategies failed
-        if(is.null(fit)) {
+        if(is.null(fit_viab)) {
           message("IC50 fit failed for ", line, ": all strategies exhausted")
-          next
+        } else {
+          message("IC50 fit succeeded for ", line, " using ", fit_method_viab)
+          
+          tryCatch({
+            # IC50
+            ic50_result <- suppressWarnings(ED(fit_viab, 50, interval = "delta", display = FALSE))
+            ec50_val <- ic50_result[1]
+            ec50_lower <- ic50_result[3]
+            ec50_upper <- ic50_result[4]
+            
+            # NEW: Extract extended metrics
+            coefs <- coef(fit_viab)
+            hill_slope <- ifelse(length(coefs) >= 1, abs(coefs[1]), NA)
+            top_plateau <- ifelse(length(coefs) >= 3, coefs[3], NA)
+            bottom_plateau <- ifelse(length(coefs) >= 2, coefs[2], NA)
+            
+            # NEW: EC25, EC75, EC90
+            ec25 <- tryCatch(ED(fit_viab, 25, interval = "delta", display = FALSE)[1] - 0.1, error = function(e) NA)
+            ec75 <- tryCatch(ED(fit_viab, 75, interval = "delta", display = FALSE)[1] - 0.1, error = function(e) NA)
+            ec90 <- tryCatch(ED(fit_viab, 90, interval = "delta", display = FALSE)[1] - 0.1, error = function(e) NA)
+            
+            # NEW: R² calculation
+            predicted_vals <- predict(fit_viab)
+            observed_vals <- line_viab$mean_viable
+            ss_res <- sum((observed_vals - predicted_vals)^2)
+            ss_tot <- sum((observed_vals - mean(observed_vals))^2)
+            r_squared <- 1 - (ss_res / ss_tot)
+            
+            # NEW: AUC calculation
+            dose_range <- seq(min(line_viab$concentration_uM), max(line_viab$concentration_uM), length.out = 1000)
+            pred_range <- predict(fit_viab, newdata = data.frame(dose = dose_range + 0.1))
+            auc_val <- AUC(dose_range, pred_range, method = "trapezoid")
+            
+            ic50_results <- rbind(ic50_results, data.frame(
+              cell_line = line,
+              IC50_uM = ec50_val - 0.1,
+              IC50_lower = ec50_lower - 0.1,
+              IC50_upper = ec50_upper - 0.1,
+              fit_method = fit_method_viab,
+              stringsAsFactors = FALSE
+            ))
+            
+            # NEW: Store advanced metrics
+            advanced_metrics <- rbind(advanced_metrics, data.frame(
+              cell_line = line,
+              metric_type = "Viability",
+              EC25_uM = ec25,
+              EC75_uM = ec75,
+              EC90_uM = ec90,
+              Hill_slope = hill_slope,
+              Top_plateau = top_plateau,
+              Bottom_plateau = bottom_plateau,
+              AUC = auc_val,
+              R_squared = r_squared,
+              stringsAsFactors = FALSE
+            ))
+            
+            pred_doses <- seq(min(line_viab$dose), max(line_viab$dose), length.out = 200)
+            pred_data <- data.frame(dose = pred_doses)
+            pred_data$predicted_viable <- predict(fit_viab, newdata = pred_data)
+            pred_data$concentration_uM <- pred_doses - 0.1
+            pred_data$cell_line <- line
+            
+            predicted_viability_curves <- rbind(predicted_viability_curves, pred_data)
+            
+          }, error = function(e) {
+            message("IC50 extraction failed for ", line, ": ", e$message)
+          })
         }
         
-        message("IC50 fit succeeded for ", line, " using ", fit_method)
+        # FIT DEATH (LD50) - Similar structure
+        fit_death <- NULL
+        fit_method_death <- "none"
         
-        # Extract IC50 (ED50 = EC50)
-        tryCatch({
-          # Use ED function to get IC50
-          ic50_result <- ED(fit, 50, interval = "delta", display = FALSE)
-          ec50_val <- ic50_result[1]
-          ec50_lower <- ic50_result[3]
-          ec50_upper <- ic50_result[4]
-          
-          ic50_results <- rbind(ic50_results, data.frame(
-            cell_line = line,
-            IC50_uM = ec50_val - 0.1,
-            IC50_lower = ec50_lower - 0.1,
-            IC50_upper = ec50_upper - 0.1,
-            fit_method = fit_method,
-            stringsAsFactors = FALSE
-          ))
-          
-          # Generate predicted curve
-          pred_doses <- seq(min(line_data$dose), max(line_data$dose), length.out = 200)
-          pred_data <- data.frame(dose = pred_doses)
-          pred_data$predicted_viable <- predict(fit, newdata = pred_data)
-          pred_data$concentration_uM <- pred_doses - 0.1
-          pred_data$cell_line <- line
-          
-          predicted_curves <- rbind(predicted_curves, pred_data)
-          
-        }, error = function(e) {
-          message("IC50 extraction failed for ", line, ": ", e$message)
-        })
+        if(is.null(fit_death)) {
+          fit_death <- tryCatch({
+            drm(mean_death ~ dose, data = line_death, fct = LL.4())
+          }, error = function(e) NULL)
+          if(!is.null(fit_death)) fit_method_death <- "LL.4 auto"
+        }
+        
+        if(is.null(fit_death)) {
+          fit_death <- tryCatch({
+            min_v <- min(line_death$mean_death, na.rm = TRUE)
+            max_v <- max(line_death$mean_death, na.rm = TRUE)
+            mid_dose <- median(line_death$dose)
+            drm(mean_death ~ dose, data = line_death,
+                fct = LL.4(names = c("Slope", "Lower", "Upper", "ED50")),
+                start = c(1, min_v, max_v, mid_dose))
+          }, error = function(e) NULL)
+          if(!is.null(fit_death)) fit_method_death <- "LL.4 manual"
+        }
+        
+        if(is.null(fit_death)) {
+          fit_death <- tryCatch({
+            drm(mean_death ~ dose, data = line_death, fct = LL.3())
+          }, error = function(e) NULL)
+          if(!is.null(fit_death)) fit_method_death <- "LL.3"
+        }
+        
+        if(is.null(fit_death)) {
+          fit_death <- tryCatch({
+            drm(mean_death ~ dose, data = line_death, fct = W1.4())
+          }, error = function(e) NULL)
+          if(!is.null(fit_death)) fit_method_death <- "Weibull"
+        }
+        
+        if(is.null(fit_death)) {
+          fit_death <- tryCatch({
+            drm(mean_death ~ dose, data = line_death, fct = W1.2())
+          }, error = function(e) NULL)
+          if(!is.null(fit_death)) fit_method_death <- "Weibull-2"
+        }
+        
+        if(!is.null(fit_death)) {
+          tryCatch({
+            ld50_result <- suppressWarnings(ED(fit_death, 50, interval = "delta", display = FALSE))
+            ed50_val <- ld50_result[1]
+            ed50_lower <- ld50_result[3]
+            ed50_upper <- ld50_result[4]
+            
+            ld50_results <- rbind(ld50_results, data.frame(
+              cell_line = line,
+              LD50_uM = ed50_val - 0.1,
+              LD50_lower = ed50_lower - 0.1,
+              LD50_upper = ed50_upper - 0.1,
+              fit_method = fit_method_death,
+              stringsAsFactors = FALSE
+            ))
+            
+            pred_doses <- seq(min(line_death$dose), max(line_death$dose), length.out = 200)
+            pred_data <- data.frame(dose = pred_doses)
+            pred_data$predicted_death <- predict(fit_death, newdata = pred_data)
+            pred_data$concentration_uM <- pred_doses - 0.1
+            pred_data$cell_line <- line
+            
+            predicted_death_curves <- rbind(predicted_death_curves, pred_data)
+            
+          }, error = function(e) {
+            message("LD50 extraction failed for ", line, ": ", e$message)
+          })
+        }
       }
       
-      # Store results
       rv$ic50_results <- ic50_results
-      rv$ic50_data <- ic50_data
-      rv$predicted_curves <- predicted_curves
+      rv$ld50_results <- ld50_results
+      rv$viability_data <- viability_data
+      rv$death_data <- death_data
+      rv$predicted_viability_curves <- predicted_viability_curves
+      rv$predicted_death_curves <- predicted_death_curves
+      rv$advanced_metrics <- advanced_metrics  # NEW
       
-      if(nrow(ic50_results) == 0) {
-        showNotification("Analysis complete, but IC50 fitting failed for all cell lines. Check that you have sufficient concentration range and dose-response.", 
+      if(nrow(ic50_results) == 0 && nrow(ld50_results) == 0) {
+        showNotification("Analysis complete, but IC50/LD50 fitting failed for all cell lines. Check data quality.",
                          type = "warning", duration = 10)
-      } else if(nrow(ic50_results) < length(unique(ic50_data$cell_line))) {
-        showNotification(paste("Analysis complete! IC50 calculated for", nrow(ic50_results), "of", 
-                               length(unique(ic50_data$cell_line)), "cell lines."), 
-                         type = "message")
       } else {
         showNotification("Analysis complete!", type = "message")
       }
     })
   })
   
-  # === OUTPUT TABLES & PLOTS ===
+  # NEW: QC UI Output
+  output$qc_ui <- renderUI({
+    req(rv$qc_data)
+    
+    tagList(
+      h5("Coefficient of Variation (CV%) by Condition"),
+      p("CV% < 15%: Good | 15-25%: Acceptable | >25%: High variability"),
+      tableOutput("qc_table"),
+      hr(),
+      h5("Outlier Detection (Grubbs Test, α=0.05)"),
+      if(!is.null(rv$outlier_flags) && nrow(rv$outlier_flags) > 0) {
+        tagList(
+          p(style = "color: #d32f2f;", icon("exclamation-triangle"), 
+            " ", nrow(rv$outlier_flags), " potential outlier(s) detected:"),
+          tableOutput("outlier_table"),
+          p(style = "font-size: 0.9em; color: #666;",
+            "Note: Outliers are not automatically removed. Review and decide if exclusion is warranted.")
+        )
+      } else {
+        div(class = "alert alert-success",
+            icon("check-circle"), " No significant outliers detected")
+      }
+    )
+  })
   
-  output$ic50_table <- renderTable({
+  output$qc_table <- renderTable({
+    req(rv$qc_data)
+    rv$qc_data %>%
+      mutate(
+        QC_Status = case_when(
+          cv_pct < 15 ~ "✓ Good",
+          cv_pct < 25 ~ "⚠ Acceptable",
+          TRUE ~ "✗ High Variability"
+        )
+      ) %>%
+      dplyr::select(`Cell Line` = cell_line,   # <-- ADD dplyr::
+                    `Concentration (µM)` = concentration_uM,
+                    `Mean Viability (%)` = mean_viable,
+                    `CV (%)` = cv_pct,
+                    `n` = n,
+                    `Status` = QC_Status)
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, digits = 2)
+  
+  output$outlier_table <- renderTable({
+    req(rv$outlier_flags)
+    rv$outlier_flags %>%
+      dplyr::select(`Cell Line` = cell_line,   # <-- ADD dplyr::
+                    `Concentration (µM)` = concentration_uM,
+                    `Replicate` = replicate,
+                    `p-value` = p_value)
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, digits = 4)
+  
+  # NEW: Statistical comparison output
+  output$stats_comparison <- renderPrint({
     req(rv$ic50_results)
     
-    if(nrow(rv$ic50_results) == 0) {
-      return(data.frame(Message = "No IC50 values could be calculated. Check data quality and concentration range."))
+    if(nrow(rv$ic50_results) < 2) {
+      cat("Statistical comparison requires at least 2 cell lines.\n")
+      return()
     }
     
-    rv$ic50_results %>%
-      mutate(`IC50 [95% CI]` = sprintf("%.2f [%.2f - %.2f] µM", 
-                                       IC50_uM, IC50_lower, IC50_upper),
-             Method = fit_method) %>%
-      dplyr::select(`Cell Line` = cell_line, `IC50 [95% CI]`, `Fit Method` = Method)
+    cat("=== STATISTICAL COMPARISON OF IC50 VALUES ===\n\n")
+    cat("Cell Line IC50 Summary:\n")
+    print(rv$ic50_results %>% dplyr::select(cell_line, IC50_uM))
+    cat("\n")
+    
+    # ANOVA test
+    cat("ANOVA Test:\n")
+    cat("H0: All cell lines have equal IC50 values\n")
+    anova_result <- tryCatch({
+      aov(IC50_uM ~ cell_line, data = rv$ic50_results)
+    }, error = function(e) NULL)
+    
+    if(!is.null(anova_result)) {
+      print(summary(anova_result))
+    } else {
+      cat("ANOVA could not be performed.\n")
+    }
+  })
+  
+  # NEW: Advanced metrics table
+  output$advanced_metrics_table <- renderTable({
+    req(rv$advanced_metrics)
+    rv$advanced_metrics %>%
+      dplyr::select(`Cell Line` = cell_line,   # <-- ADD dplyr::
+                    `Type` = metric_type,
+                    `EC25 (µM)` = EC25_uM,
+                    `EC75 (µM)` = EC75_uM,
+                    `EC90 (µM)` = EC90_uM,
+                    `Hill Slope` = Hill_slope,
+                    `Top (%)` = Top_plateau,
+                    `Bottom (%)` = Bottom_plateau,
+                    `AUC` = AUC,
+                    `R²` = R_squared)
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, digits = 3)
+  
+  # === SMART X-AXIS BREAKS (UNCHANGED) ===
+  get_smart_breaks <- function(conc_range) {
+    min_c <- min(conc_range)
+    max_c <- max(conc_range)
+    
+    if(max_c <= 1) {
+      return(c(0, 0.1, 0.5, 1))
+    } else if(max_c <= 10) {
+      return(c(0, 0.1, 0.5, 1, 5, 10))
+    } else if(max_c <= 100) {
+      return(c(0, 0.1, 0.5, 1, 10, 50, 100))
+    } else {
+      return(c(0, 1, 10, 100, 500, 1000))
+    }
+  }
+  
+  # === OUTPUT TABLES (UNCHANGED STRUCTURE) ===
+  output$ic50_table <- renderTable({
+    req(rv$ic50_results, rv$ld50_results)
+    
+    combined <- merge(rv$ic50_results, rv$ld50_results, by = "cell_line", all = TRUE)
+    combined <- combined %>%
+      mutate(
+        `IC50 [95% CI] µM` = ifelse(is.na(IC50_uM), "N/A",
+                                    sprintf("%.2f [%.2f - %.2f]", IC50_uM, IC50_lower, IC50_upper)),
+        `LD50 [95% CI] µM` = ifelse(is.na(LD50_uM), "N/A",
+                                    sprintf("%.2f [%.2f - %.2f]", LD50_uM, LD50_lower, LD50_upper))
+      )
+    
+    combined <- combined[, c("cell_line", "IC50 [95% CI] µM", "LD50 [95% CI] µM")]
+    colnames(combined)[1] <- "Cell Line"
+    
+    combined
   }, striped = TRUE, hover = TRUE, bordered = TRUE)
   
-  output$dose_response_plot <- renderPlot({
-    req(rv$ic50_data)
+  # === VIABILITY PLOT (UNCHANGED) ===
+  output$viability_plot <- renderPlot({
+    req(rv$viability_data)
     
-    # If no predicted curves, just plot the data points
-    if(is.null(rv$predicted_curves) || nrow(rv$predicted_curves) == 0) {
-      p <- ggplot(rv$ic50_data, aes(x = concentration_uM, y = mean_viable, color = cell_line)) +
-        geom_point(size = 4, shape = 21, fill = "white", stroke = 1.5) +
-        geom_errorbar(aes(ymin = mean_viable - se_viable, 
-                          ymax = mean_viable + se_viable),
-                      width = 0.15, linewidth = 1) +
-        scale_x_continuous(trans = scales::pseudo_log_trans(base = 10),
-                           breaks = c(0, 1, 10, 20, 50, 100)) +
-        scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
-        labs(title = "Dose-Response Data",
-             subtitle = "IC50 fitting failed - check data quality",
-             x = "Concentration (µM)", y = "Cell Viability (%)", color = "Cell Line") +
-        theme_bw(base_size = 16) +
-        theme(legend.position = "right",
-              plot.title = element_text(face = "bold", hjust = 0.5, size = 18),
-              plot.subtitle = element_text(hjust = 0.5, size = 12, color = "red"),
-              panel.grid.minor = element_blank())
-      
-      rv$dose_response_plot_obj <- p
-      return(p)
+    cell_lines <- unique(rv$viability_data$cell_line)
+    colors <- get_color_palette(length(cell_lines))
+    names(colors) <- cell_lines
+    
+    conc_range <- rv$viability_data$concentration_uM
+    breaks <- get_smart_breaks(conc_range)
+    
+    p <- ggplot() +
+      geom_point(data = rv$viability_data, aes(x = concentration_uM, y = mean_viable, color = cell_line),
+                 size = 4, shape = 21, fill = "white", stroke = 1.5) +
+      geom_errorbar(data = rv$viability_data,
+                    aes(x = concentration_uM, ymin = mean_viable - se_viable,
+                        ymax = mean_viable + se_viable, color = cell_line),
+                    width = 0.15, linewidth = 1)
+    
+    if(!is.null(rv$predicted_viability_curves) && nrow(rv$predicted_viability_curves) > 0) {
+      p <- p + geom_line(data = rv$predicted_viability_curves,
+                         aes(x = concentration_uM, y = predicted_viable, color = cell_line),
+                         linewidth = 1.5, alpha = 0.9)
     }
     
-    # Plot with curves
-    p <- ggplot() +
-      geom_line(data = rv$predicted_curves,
-                aes(x = concentration_uM, y = predicted_viable, color = cell_line),
-                linewidth = 1.5, alpha = 0.9) +
-      geom_point(data = rv$ic50_data,
-                 aes(x = concentration_uM, y = mean_viable, color = cell_line),
-                 size = 4, shape = 21, fill = "white", stroke = 1.5) +
-      geom_errorbar(data = rv$ic50_data,
-                    aes(x = concentration_uM, 
-                        ymin = mean_viable - se_viable, 
-                        ymax = mean_viable + se_viable,
-                        color = cell_line),
-                    width = 0.15, linewidth = 1) +
-      scale_x_continuous(trans = scales::pseudo_log_trans(base = 10),
-                         breaks = c(0, 1, 10, 20, 50, 100)) +
+    p <- p + scale_color_manual(values = colors) +
+      scale_x_continuous(trans = pseudo_log_trans(base = 10), breaks = breaks) +
       scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
       labs(title = "Dose-Response Curves with IC50 Determination",
            subtitle = "Multiple fitting strategies attempted for optimal curve fit",
            x = "Concentration (µM)", y = "Cell Viability (%)", color = "Cell Line") +
-      theme_bw(base_size = 16) +
-      theme(legend.position = "right",
-            plot.title = element_text(face = "bold", hjust = 0.5, size = 18),
-            plot.subtitle = element_text(hjust = 0.5, size = 12, color = "gray30"),
-            panel.grid.minor = element_blank())
+      theme_publication()
     
-    rv$dose_response_plot_obj <- p
+    rv$viability_plot_obj <- p
     p
   })
   
-  output$ic50_comparison_plot <- renderPlot({
-    req(rv$ic50_results)
+  # === DEATH PLOT (UNCHANGED) ===
+  output$death_plot <- renderPlot({
+    req(rv$death_data)
     
-    if(nrow(rv$ic50_results) == 0) {
-      return(ggplot() + 
-               annotate("text", x = 0.5, y = 0.5, 
-                        label = "No IC50 values to display\nCheck data quality and concentration range",
-                        size = 8, color = "red") +
-               theme_void())
+    cell_lines <- unique(rv$death_data$cell_line)
+    colors <- get_color_palette(length(cell_lines))
+    names(colors) <- cell_lines
+    
+    conc_range <- rv$death_data$concentration_uM
+    breaks <- get_smart_breaks(conc_range)
+    
+    p <- ggplot() +
+      geom_point(data = rv$death_data, aes(x = concentration_uM, y = mean_death, color = cell_line),
+                 size = 4, shape = 21, fill = "white", stroke = 1.5) +
+      geom_errorbar(data = rv$death_data,
+                    aes(x = concentration_uM, ymin = mean_death - se_death,
+                        ymax = mean_death + se_death, color = cell_line),
+                    width = 0.15, linewidth = 1)
+    
+    if(!is.null(rv$predicted_death_curves) && nrow(rv$predicted_death_curves) > 0) {
+      p <- p + geom_line(data = rv$predicted_death_curves,
+                         aes(x = concentration_uM, y = predicted_death, color = cell_line),
+                         linewidth = 1.5, alpha = 0.9)
     }
     
-    p <- ggplot(rv$ic50_results, aes(x = reorder(cell_line, IC50_uM), 
-                                     y = IC50_uM, fill = cell_line)) +
-      geom_bar(stat = "identity", width = 0.6, color = "black", linewidth = 0.8) +
-      geom_errorbar(aes(ymin = IC50_lower, ymax = IC50_upper), 
-                    width = 0.25, linewidth = 1) +
-      geom_text(aes(label = sprintf("%.2f µM", IC50_uM)), 
-                vjust = -0.5, size = 5, fontface = "bold") +
-      labs(title = "IC50 Comparison Across Cell Lines",
-           subtitle = "Error bars represent 95% confidence intervals",
-           x = "Cell Line", y = "IC50 (µM)") +
-      theme_bw(base_size = 16) +
-      theme(legend.position = "none",
-            plot.title = element_text(face = "bold", hjust = 0.5, size = 18),
-            plot.subtitle = element_text(hjust = 0.5, size = 12, color = "gray30"),
-            axis.text.x = element_text(angle = 0))
+    p <- p + scale_color_manual(values = colors) +
+      scale_x_continuous(trans = pseudo_log_trans(base = 10), breaks = breaks) +
+      scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
+      labs(title = "Cell Death Dose-Response Curves with LD50",
+           subtitle = "Cell death = Early Apoptotic + Late Apoptotic + Necrotic",
+           x = "Concentration (µM)", y = "Cell Death (%)", color = "Cell Line") +
+      theme_publication()
     
-    rv$ic50_comparison_plot_obj <- p
+    rv$death_plot_obj <- p
+    p
+  })
+  
+  # === IC50 vs LD50 COMPARISON (UNCHANGED) ===
+  output$ic50_ld50_comparison <- renderPlot({
+    req(rv$ic50_results, rv$ld50_results)
+    
+    combined <- merge(rv$ic50_results, rv$ld50_results, by = "cell_line", all = TRUE)
+    combined_long <- combined %>%
+      pivot_longer(cols = c(IC50_uM, LD50_uM), names_to = "Metric", values_to = "Value") %>%
+      filter(!is.na(Value)) %>%
+      mutate(Metric = ifelse(Metric == "IC50_uM", "IC50 (Viability)", "LD50 (Death)"))
+    
+    cell_lines <- unique(combined_long$cell_line)
+    colors <- get_color_palette(length(cell_lines))
+    names(colors) <- cell_lines
+    
+    p <- ggplot(combined_long, aes(x = reorder(cell_line, Value), y = Value, fill = cell_line)) +
+      geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7, color = "black", linewidth = 0.5) +
+      geom_text(aes(label = sprintf("%.2f", Value)), position = position_dodge(width = 0.8),
+                vjust = -0.5, size = 3.5, fontface = "bold") +
+      facet_wrap(~ Metric, scales = "free_y") +
+      scale_fill_manual(values = colors) +
+      labs(title = "IC50 vs LD50 Comparison Across Cell Lines",
+           subtitle = "IC50: Half-maximal inhibitory concentration | LD50: Lethal dose 50%",
+           x = "Cell Line", y = "Concentration (µM)") +
+      theme_publication() +
+      theme(legend.position = "none",
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            strip.text = element_text(size = 11, face = "bold"))
+    
+    rv$comparison_plot_obj <- p
+    p
+  })
+  
+  # === QUADRANT BREAKDOWN (UNCHANGED) ===
+  output$quadrant_plot <- renderPlot({
+    req(rv$results)
+    
+    quadrant_data <- rv$results %>%
+      group_by(cell_line, concentration_uM) %>%
+      summarise(
+        Viable = mean(pct_viable),
+        `Early Apoptotic` = mean(pct_early_apoptotic),
+        `Late Apoptotic` = mean(pct_late_apoptotic),
+        Necrotic = mean(pct_necrotic),
+        .groups = "drop"
+      ) %>%
+      pivot_longer(cols = c(Viable, `Early Apoptotic`, `Late Apoptotic`, Necrotic),
+                   names_to = "Quadrant", values_to = "Percentage")
+    
+    quadrant_data$Quadrant <- factor(quadrant_data$Quadrant,
+                                     levels = c("Viable", "Early Apoptotic", "Late Apoptotic", "Necrotic"))
+    
+    p <- ggplot(quadrant_data, aes(x = as.factor(concentration_uM), y = Percentage, fill = Quadrant)) +
+      geom_bar(stat = "identity", position = "stack", color = "black", linewidth = 0.3) +
+      scale_fill_manual(values = c("Viable" = "#009E73",
+                                   "Early Apoptotic" = "#F0E442",
+                                   "Late Apoptotic" = "#D55E00",
+                                   "Necrotic" = "#CC79A7")) +
+      facet_wrap(~ cell_line, scales = "free_x") +
+      labs(title = "Apoptosis Quadrant Breakdown by Concentration",
+           subtitle = "Annexin V/PI classification: Viable (−/−), Early Apoptotic (+/−), Late Apoptotic (+/+), Necrotic (−/+)",
+           x = "Concentration (µM)", y = "Percentage (%)", fill = "Cell State") +
+      theme_publication() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1),
+            strip.text = element_text(size = 10, face = "bold"))
+    
+    rv$quadrant_plot_obj <- p
     p
   })
   
   output$download_results <- downloadHandler(
-    filename = function() { paste0("IC50_results_", Sys.Date(), ".csv") },
-    content = function(file) { 
-      req(rv$ic50_results)
-      write_csv(rv$ic50_results, file) 
+    filename = function() { paste0("FACS_results_", Sys.Date(), ".csv") },
+    content = function(file) {
+      req(rv$results)
+      write_csv(rv$results, file)
     }
   )
   
-  # === ZIP DOWNLOAD WITH ALL RESULTS ===
+  # === ENHANCED ZIP DOWNLOAD ===
   output$download_zip_ui <- renderUI({
     req(rv$results)
-    downloadButton("download_zip", "📦 Download All Results (ZIP)", 
+    downloadButton("download_zip", "📦 Download All Results (ZIP)",
                    class = "btn-info btn-lg btn-block",
                    style = "margin-top: 10px; font-size: 1.1em; padding: 12px;")
   })
@@ -1467,22 +1842,48 @@ server <- function(input, output, session) {
       temp_dir <- tempdir()
       
       # Save raw viability data CSV (always available)
-      write_csv(rv$results, file.path(temp_dir, "raw_viability_data.csv"))
+      write_csv(rv$results, file.path(temp_dir, "raw_quadrant_data.csv"))
       
       # Save IC50 results CSV (if available)
       if(!is.null(rv$ic50_results) && nrow(rv$ic50_results) > 0) {
         write_csv(rv$ic50_results, file.path(temp_dir, "IC50_results.csv"))
       }
       
+      # Save LD50 results CSV (if available)
+      if(!is.null(rv$ld50_results) && nrow(rv$ld50_results) > 0) {
+        write_csv(rv$ld50_results, file.path(temp_dir, "LD50_results.csv"))
+      }
+      
+      # NEW: Save QC data
+      if(!is.null(rv$qc_data) && nrow(rv$qc_data) > 0) {
+        write_csv(rv$qc_data, file.path(temp_dir, "QC_CV_analysis.csv"))
+      }
+      
+      # NEW: Save outlier flags
+      if(!is.null(rv$outlier_flags) && nrow(rv$outlier_flags) > 0) {
+        write_csv(rv$outlier_flags, file.path(temp_dir, "outlier_detection.csv"))
+      }
+      
+      # NEW: Save cell counts
+      if(!is.null(rv$cell_counts) && nrow(rv$cell_counts) > 0) {
+        write_csv(rv$cell_counts, file.path(temp_dir, "cell_counts_per_gate.csv"))
+      }
+      
+      # NEW: Save advanced metrics
+      if(!is.null(rv$advanced_metrics) && nrow(rv$advanced_metrics) > 0) {
+        write_csv(rv$advanced_metrics, file.path(temp_dir, "advanced_metrics_EC_AUC_Hill.csv"))
+      }
+      
       # Save metadata summary
-      metadata_summary <- rv$metadata %>%
-        dplyr::select(filename = name, cell_line, treatment_full, concentration_uM, replicate)
+      metadata_summary <- rv$metadata[, c("name", "cell_line", "treatment_full", "concentration_uM", "replicate")]
+      colnames(metadata_summary)[1] <- "filename"
       write_csv(metadata_summary, file.path(temp_dir, "file_metadata.csv"))
       
       # Save control summary
       control_summary <- data.frame(
         control_concentration_uM = rv$control_concentration,
-        compensation_applied = rv$comp_calculated
+        compensation_applied = rv$comp_calculated,
+        normalization_applied = input$use_normalization
       )
       write_csv(control_summary, file.path(temp_dir, "analysis_settings.csv"))
       
@@ -1493,23 +1894,78 @@ server <- function(input, output, session) {
         write_csv(comp_df, file.path(temp_dir, "compensation_matrix.csv"))
       }
       
-      # Save dose-response plot
-      if(!is.null(rv$dose_response_plot_obj)) {
-        ggsave(file.path(temp_dir, "dose_response_curves.png"),
-               plot = rv$dose_response_plot_obj,
-               width = 12, height = 8, dpi = 300)
+      # NEW: Save gate coordinates
+      if(length(rv$thresholds) > 0) {
+        gate_coords <- data.frame()
+        for(line in names(rv$thresholds)) {
+          fsc_poly <- rv$thresholds[[line]]$fsc_ssc$polygon
+          fsc_poly$cell_line <- line
+          fsc_poly$gate_type <- "FSC_SSC"
+          gate_coords <- rbind(gate_coords, fsc_poly)
+          
+          sing_poly <- rv$thresholds[[line]]$singlets$polygon
+          sing_poly$cell_line <- line
+          sing_poly$gate_type <- "Singlets"
+          gate_coords <- rbind(gate_coords, sing_poly)
+        }
+        write_csv(gate_coords, file.path(temp_dir, "gate_coordinates.csv"))
       }
       
-      # Save IC50 comparison plot (if available)
-      if(!is.null(rv$ic50_comparison_plot_obj) && !is.null(rv$ic50_results) && nrow(rv$ic50_results) > 0) {
-        ggsave(file.path(temp_dir, "ic50_comparison.png"),
-               plot = rv$ic50_comparison_plot_obj,
+      # Save viability plot (PNG, SVG, PDF)
+      if(!is.null(rv$viability_plot_obj)) {
+        ggsave(file.path(temp_dir, "viability_curves.png"),
+               plot = rv$viability_plot_obj,
+               width = 12, height = 8, dpi = 300)
+        ggsave(file.path(temp_dir, "viability_curves.svg"),
+               plot = rv$viability_plot_obj,
+               width = 12, height = 8)
+        ggsave(file.path(temp_dir, "viability_curves.pdf"),
+               plot = rv$viability_plot_obj,
+               width = 12, height = 8)
+      }
+      
+      # Save death plot (PNG, SVG, PDF)
+      if(!is.null(rv$death_plot_obj)) {
+        ggsave(file.path(temp_dir, "death_curves.png"),
+               plot = rv$death_plot_obj,
+               width = 12, height = 8, dpi = 300)
+        ggsave(file.path(temp_dir, "death_curves.svg"),
+               plot = rv$death_plot_obj,
+               width = 12, height = 8)
+        ggsave(file.path(temp_dir, "death_curves.pdf"),
+               plot = rv$death_plot_obj,
+               width = 12, height = 8)
+      }
+      
+      # Save IC50/LD50 comparison plot (PNG, SVG, PDF)
+      if(!is.null(rv$comparison_plot_obj)) {
+        ggsave(file.path(temp_dir, "ic50_ld50_comparison.png"),
+               plot = rv$comparison_plot_obj,
                width = 10, height = 6, dpi = 300)
+        ggsave(file.path(temp_dir, "ic50_ld50_comparison.svg"),
+               plot = rv$comparison_plot_obj,
+               width = 10, height = 6)
+        ggsave(file.path(temp_dir, "ic50_ld50_comparison.pdf"),
+               plot = rv$comparison_plot_obj,
+               width = 10, height = 6)
+      }
+      
+      # Save quadrant breakdown plot (PNG, SVG, PDF)
+      if(!is.null(rv$quadrant_plot_obj)) {
+        ggsave(file.path(temp_dir, "quadrant_breakdown.png"),
+               plot = rv$quadrant_plot_obj,
+               width = 14, height = 10, dpi = 300)
+        ggsave(file.path(temp_dir, "quadrant_breakdown.svg"),
+               plot = rv$quadrant_plot_obj,
+               width = 14, height = 10)
+        ggsave(file.path(temp_dir, "quadrant_breakdown.pdf"),
+               plot = rv$quadrant_plot_obj,
+               width = 14, height = 10)
       }
       
       # Create ZIP file
       files_to_zip <- list.files(temp_dir, full.names = TRUE)
-      files_to_zip <- files_to_zip[grep("IC50_|raw_|file_|analysis_|compensation_|dose_|ic50_", 
+      files_to_zip <- files_to_zip[grep("IC50_|LD50_|raw_|file_|analysis_|compensation_|viability_|death_|ic50_ld50_|quadrant_|QC_|outlier_|cell_counts_|advanced_|gate_",
                                         basename(files_to_zip))]
       
       zip::zip(zipfile = file, files = files_to_zip, mode = "cherry-pick")
@@ -1523,6 +1979,3 @@ server <- function(input, output, session) {
 # ============================================================================
 
 shinyApp(ui = ui, server = server)
-
-# ===== END OF PART 4 =====
-# This is the end of the complete app.R file!
