@@ -163,8 +163,8 @@ ui <- fluidPage(
   ),
   
   div(class = "gradient-header",
-      h1("Flow Cytometry IC50 Analyzer"),
-      p("Annexin V/PI apoptosis assay with gating, compensation, and IC50 determination")),
+      h1("Flow Cytometry Dose-Response Analyzer"),
+      p("Automated apoptosis analysis with quality control and pharmacodynamic profiling")),
   
   div(class = "content-wrapper",
       fluidRow(
@@ -647,7 +647,7 @@ server <- function(input, output, session) {
   observe({
     req(rv$thresholds)
     cell_lines <- names(rv$thresholds)
-    
+  
     lapply(cell_lines, function(line) {
       local({
         line_local <- line
@@ -1083,44 +1083,62 @@ server <- function(input, output, session) {
   observeEvent(input$save_gate, {
     req(rv$current_gating_data)
     cell_line <- rv$current_gating_data$cell_line
-    
+  
     rv$thresholds[[cell_line]] <- list(
-      fsc_ssc = rv$temp_fsc_ssc_gates,
-      singlets = rv$temp_singlet_gates,
-      annexin_pi = list(type = "rectangle", annexin = input$annexin_threshold, pi = input$pi_threshold)
-    )
-    
-    # NEW: Store gate visualization plot for review
-    tryCatch({
-      gate_summary_plot <- grid.arrange(
-        ggplot() + annotate("text", x = 0.5, y = 0.5, 
-                            label = paste("Gates saved for", cell_line), 
-                            size = 6) + theme_void(),
-        nrow = 1
+      fsc_ssc   = rv$temp_fsc_ssc_gates,
+      singlets  = rv$temp_singlet_gates,
+      annexin_pi = list(
+        type    = "rectangle",
+        annexin = input$annexin_threshold,
+        pi      = input$pi_threshold
       )
-      rv$gate_plots[[cell_line]] <- gate_summary_plot
-    }, error = function(e) {
-      message("Gate plot storage failed: ", e$message)
-    })
-    
+    )
+  
+    # ---- NEW: store a real FSC/SSC gate plot for Gate Review ----
+    # Rebuild a small data frame for FSC/SSC from the control gate
+    if (!is.null(rv$temp_gated_data_cells) && !is.null(rv$temp_fsc_ssc_gates)) {
+      gate_df <- data.frame(
+        FSC = rv$temp_gated_data_cells[, "FSC-A"],
+        SSC = rv$temp_gated_data_cells[, "SSC-A"]
+      )
+      poly_df <- rv$temp_fsc_ssc_gates$polygon
+  
+      rv$gate_plots[[cell_line]] <- ggplot(gate_df, aes(x = FSC, y = SSC)) +
+        geom_point(alpha = 0.2, size = 0.5) +
+        geom_path(data = poly_df, aes(x = x, y = y),
+                  color = "red", linewidth = 1) +
+        labs(
+          title = paste("FSC/SSC Gate -", cell_line),
+          x = "FSC-A",
+          y = "SSC-A"
+        ) +
+        theme_bw(base_size = 12)
+    } else {
+      # Fallback: at least show something instead of NULL
+      rv$gate_plots[[cell_line]] <- ggplot() +
+        annotate(
+          "text",
+          x = 0.5, y = 0.5,
+          label = paste("Gates saved for", cell_line),
+          size = 6
+        ) +
+        xlim(0, 1) + ylim(0, 1) +
+        theme_void()
+    }
+    # -------------------------------------------------------------
+  
     showNotification(paste("Gates saved for", cell_line), type = "message")
-    
+  
     rv$current_cell_line_index <- rv$current_cell_line_index + 1
-    rv$gating_step <- "fsc_ssc"
-    rv$polygon_points <- data.frame(x = numeric(), y = numeric())
-    rv$current_gating_data <- NULL
+    rv$gating_step             <- "fsc_ssc"
+    rv$polygon_points          <- data.frame(x = numeric(), y = numeric())
+    rv$current_gating_data     <- NULL
     rv$current_gating_data_fsc <- NULL
     rv$current_gating_data_singlet <- NULL
-    rv$temp_fsc_ssc_gates <- NULL
-    rv$temp_singlet_gates <- NULL
-    rv$temp_gated_data_cells <- NULL
+    rv$temp_fsc_ssc_gates      <- NULL
+    rv$temp_singlet_gates      <- NULL
+    rv$temp_gated_data_cells   <- NULL
     rv$temp_gated_data_singlets <- NULL
-  })
-  
-  observeEvent(input$skip_line, {
-    rv$current_cell_line_index <- rv$current_cell_line_index + 1
-    rv$gating_step <- "fsc_ssc"
-    rv$polygon_points <- data.frame(x = numeric(), y = numeric())
   })
   # === ANALYSIS WITH ENHANCED METRICS ===
   observeEvent(input$analyze, {
