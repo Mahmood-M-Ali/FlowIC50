@@ -1,19 +1,20 @@
 # ============================================================================
 # FACS IC50 ANALYSIS - ENHANCED VERSION
-# With 4-quadrant analysis, cell death curves, publication-ready exports
 # ============================================================================
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
   install.packages("BiocManager")
 }
 if (!requireNamespace("flowCore", quietly = TRUE)) {
-  BiocManager::install("flowCore")
+  BiocManager::install("flowCore", update = FALSE, ask = FALSE)
 }
 
-required_packages <- c("shiny", "bslib", "ggplot2", "dplyr", "tidyr",
-                       "readr", "stringr", "drc", "scales", "sp", "zip", "svglite",
-                       "outliers", "DescTools", "pheatmap", "gridExtra")
-for(pkg in required_packages) {
+required_packages <- c(
+  "shiny", "bslib", "ggplot2", "dplyr", "tidyr",
+  "readr", "stringr", "drc", "scales", "sp", "zip", "svglite",
+  "outliers", "DescTools", "pheatmap", "gridExtra", "rmarkdown", "kableExtra"
+)
+for (pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
 }
 
@@ -35,6 +36,8 @@ suppressPackageStartupMessages({
   library(DescTools)
   library(pheatmap)
   library(gridExtra)
+  library(rmarkdown)
+  library(kableExtra)
 })
 
 # ============================================================================
@@ -469,13 +472,15 @@ server <- function(input, output, session) {
     
     combined <- rbind(before_df, after_df)
     
-    ggplot(combined, aes(x = BL1, y = BL2)) +
+    p <- ggplot(combined, aes(x = BL1, y = BL2)) +
       geom_point(alpha = 0.1, size = 0.5, color = "#2196F3") +
       facet_wrap(~ Type) +
       labs(title = "Compensation Effect on Annexin V-FITC vs PI",
            x = "BL1-A (Annexin V-FITC)", y = "BL2-A (PI)") +
       theme_publication() +
       theme(strip.text = element_text(size = 11, face = "bold"))
+    rv$comp_plot_obj <- p  # store for the HTML report
+    p
   })
   
   # === FILE PARSING (UNCHANGED) ===
@@ -647,7 +652,7 @@ server <- function(input, output, session) {
   observe({
     req(rv$thresholds)
     cell_lines <- names(rv$thresholds)
-  
+    
     lapply(cell_lines, function(line) {
       local({
         line_local <- line
@@ -1083,7 +1088,7 @@ server <- function(input, output, session) {
   observeEvent(input$save_gate, {
     req(rv$current_gating_data)
     cell_line <- rv$current_gating_data$cell_line
-  
+    
     rv$thresholds[[cell_line]] <- list(
       fsc_ssc   = rv$temp_fsc_ssc_gates,
       singlets  = rv$temp_singlet_gates,
@@ -1093,7 +1098,7 @@ server <- function(input, output, session) {
         pi      = input$pi_threshold
       )
     )
-  
+    
     # ---- NEW: store a real FSC/SSC gate plot for Gate Review ----
     # Rebuild a small data frame for FSC/SSC from the control gate
     if (!is.null(rv$temp_gated_data_cells) && !is.null(rv$temp_fsc_ssc_gates)) {
@@ -1102,7 +1107,7 @@ server <- function(input, output, session) {
         SSC = rv$temp_gated_data_cells[, "SSC-A"]
       )
       poly_df <- rv$temp_fsc_ssc_gates$polygon
-  
+      
       rv$gate_plots[[cell_line]] <- ggplot(gate_df, aes(x = FSC, y = SSC)) +
         geom_point(alpha = 0.2, size = 0.5) +
         geom_path(data = poly_df, aes(x = x, y = y),
@@ -1126,9 +1131,9 @@ server <- function(input, output, session) {
         theme_void()
     }
     # -------------------------------------------------------------
-  
+    
     showNotification(paste("Gates saved for", cell_line), type = "message")
-  
+    
     rv$current_cell_line_index <- rv$current_cell_line_index + 1
     rv$gating_step             <- "fsc_ssc"
     rv$polygon_points          <- data.frame(x = numeric(), y = numeric())
@@ -1929,68 +1934,423 @@ server <- function(input, output, session) {
         write_csv(gate_coords, file.path(temp_dir, "gate_coordinates.csv"))
       }
       
+      # --- Build gate summary table for the report ---
+      gate_summary <- NULL
+      if (length(rv$thresholds) > 0) {
+        gate_summary <- data.frame()
+        
+        for (line in names(rv$thresholds)) {
+          th <- rv$thresholds[[line]]
+          
+          fsc_npts  <- nrow(th$fsc_ssc$polygon)
+          sing_npts <- nrow(th$singlets$polygon)
+          ann_th    <- th$annexin_pi$annexin
+          pi_th     <- th$annexin_pi$pi
+          
+          gate_summary <- rbind(
+            gate_summary,
+            data.frame(
+              cell_line         = line,
+              fsc_ssc_points    = fsc_npts,
+              singlet_points    = sing_npts,
+              annexin_threshold = ann_th,
+              pi_threshold      = pi_th,
+              stringsAsFactors  = FALSE
+            )
+          )
+        }
+      }
+      
+      # --- Rebuild plots for report (independent of UI tabs) ---
+      
+      # 1) Viability plot
+      plot_viability <- NULL
+      if (!is.null(rv$viability_data) && nrow(rv$viability_data) > 0) {
+        cell_lines <- unique(rv$viability_data$cell_line)
+        colors <- get_color_palette(length(cell_lines))
+        names(colors) <- cell_lines
+        
+        conc_range <- rv$viability_data$concentration_uM
+        breaks <- get_smart_breaks(conc_range)
+        
+        p <- ggplot() +
+          geom_point(
+            data = rv$viability_data,
+            aes(x = concentration_uM, y = mean_viable, color = cell_line),
+            size = 4, shape = 21, fill = "white", stroke = 1.5
+          ) +
+          geom_errorbar(
+            data = rv$viability_data,
+            aes(
+              x = concentration_uM,
+              ymin = mean_viable - se_viable,
+              ymax = mean_viable + se_viable,
+              color = cell_line
+            ),
+            width = 0.15, linewidth = 1
+          )
+        
+        if (!is.null(rv$predicted_viability_curves) &&
+            nrow(rv$predicted_viability_curves) > 0) {
+          p <- p + geom_line(
+            data = rv$predicted_viability_curves,
+            aes(x = concentration_uM, y = predicted_viable, color = cell_line),
+            linewidth = 1.5, alpha = 0.9
+          )
+        }
+        
+        p <- p +
+          scale_color_manual(values = colors) +
+          scale_x_continuous(trans = pseudo_log_trans(base = 10), breaks = breaks) +
+          scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
+          labs(
+            title    = "Dose-Response Curves with IC50 Determination",
+            subtitle = "Multiple fitting strategies attempted for optimal curve fit",
+            x        = "Concentration (µM)",
+            y        = "Cell Viability (%)",
+            color    = "Cell Line"
+          ) +
+          theme_publication()
+        
+        plot_viability <- p
+      }
+      
+      # 2) Death plot
+      plot_death <- NULL
+      if (!is.null(rv$death_data) && nrow(rv$death_data) > 0) {
+        cell_lines <- unique(rv$death_data$cell_line)
+        colors <- get_color_palette(length(cell_lines))
+        names(colors) <- cell_lines
+        
+        conc_range <- rv$death_data$concentration_uM
+        breaks <- get_smart_breaks(conc_range)
+        
+        p <- ggplot() +
+          geom_point(
+            data = rv$death_data,
+            aes(x = concentration_uM, y = mean_death, color = cell_line),
+            size = 4, shape = 21, fill = "white", stroke = 1.5
+          ) +
+          geom_errorbar(
+            data = rv$death_data,
+            aes(
+              x = concentration_uM,
+              ymin = mean_death - se_death,
+              ymax = mean_death + se_death,
+              color = cell_line
+            ),
+            width = 0.15, linewidth = 1
+          )
+        
+        if (!is.null(rv$predicted_death_curves) &&
+            nrow(rv$predicted_death_curves) > 0) {
+          p <- p + geom_line(
+            data = rv$predicted_death_curves,
+            aes(x = concentration_uM, y = predicted_death, color = cell_line),
+            linewidth = 1.5, alpha = 0.9
+          )
+        }
+        
+        p <- p +
+          scale_color_manual(values = colors) +
+          scale_x_continuous(trans = pseudo_log_trans(base = 10), breaks = breaks) +
+          scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
+          labs(
+            title    = "Cell Death Dose-Response Curves with LD50",
+            subtitle = "Cell death = Early Apoptotic + Late Apoptotic + Necrotic",
+            x        = "Concentration (µM)",
+            y        = "Cell Death (%)",
+            color    = "Cell Line"
+          ) +
+          theme_publication()
+        
+        plot_death <- p
+      }
+      
+      # 3) IC50 / LD50 comparison plot
+      plot_ic50_ld50 <- NULL
+      if (!is.null(rv$ic50_results) && !is.null(rv$ld50_results) &&
+          nrow(rv$ic50_results) > 0 && nrow(rv$ld50_results) > 0) {
+        
+        combined <- merge(rv$ic50_results, rv$ld50_results,
+                          by = "cell_line", all = TRUE)
+        
+        combined_long <- combined %>%
+          pivot_longer(
+            cols      = c(IC50_uM, LD50_uM),
+            names_to  = "Metric",
+            values_to = "Value"
+          ) %>%
+          filter(!is.na(Value)) %>%
+          mutate(Metric = ifelse(
+            Metric == "IC50_uM", "IC50 (Viability)", "LD50 (Death)"
+          ))
+        
+        cell_lines <- unique(combined_long$cell_line)
+        colors <- get_color_palette(length(cell_lines))
+        names(colors) <- cell_lines
+        
+        p <- ggplot(
+          combined_long,
+          aes(x = reorder(cell_line, Value), y = Value, fill = cell_line)
+        ) +
+          geom_bar(
+            stat     = "identity",
+            position = position_dodge(width = 0.8),
+            width    = 0.7,
+            color    = "black",
+            linewidth = 0.5
+          ) +
+          geom_text(
+            aes(label = sprintf("%.2f", Value)),
+            position = position_dodge(width = 0.8),
+            vjust    = -0.5,
+            size     = 3.5,
+            fontface = "bold"
+          ) +
+          facet_wrap(~ Metric, scales = "free_y") +
+          scale_fill_manual(values = colors) +
+          labs(
+            title    = "IC50 vs LD50 Comparison Across Cell Lines",
+            subtitle = "IC50: Half-maximal inhibitory concentration | LD50: Lethal dose 50%",
+            x        = "Cell Line",
+            y        = "Concentration (µM)"
+          ) +
+          theme_publication() +
+          theme(
+            legend.position = "none",
+            axis.text.x     = element_text(angle = 45, hjust = 1),
+            strip.text      = element_text(size = 11, face = "bold")
+          )
+        
+        plot_ic50_ld50 <- p
+      }
+      
+      # 4) Quadrant breakdown plot
+      plot_quadrant <- NULL
+      if (!is.null(rv$results) && nrow(rv$results) > 0) {
+        quadrant_data <- rv$results %>%
+          group_by(cell_line, concentration_uM) %>%
+          summarise(
+            Viable            = mean(pct_viable),
+            `Early Apoptotic` = mean(pct_early_apoptotic),
+            `Late Apoptotic`  = mean(pct_late_apoptotic),
+            Necrotic          = mean(pct_necrotic),
+            .groups           = "drop"
+          ) %>%
+          pivot_longer(
+            cols      = c(Viable, `Early Apoptotic`, `Late Apoptotic`, Necrotic),
+            names_to  = "Quadrant",
+            values_to = "Percentage"
+          )
+        
+        quadrant_data$Quadrant <- factor(
+          quadrant_data$Quadrant,
+          levels = c("Viable", "Early Apoptotic", "Late Apoptotic", "Necrotic")
+        )
+        
+        p <- ggplot(
+          quadrant_data,
+          aes(x = as.factor(concentration_uM), y = Percentage, fill = Quadrant)
+        ) +
+          geom_bar(
+            stat     = "identity",
+            position = "stack",
+            color    = "black",
+            linewidth = 0.3
+          ) +
+          scale_fill_manual(values = c(
+            "Viable"          = "#009E73",
+            "Early Apoptotic" = "#F0E442",
+            "Late Apoptotic"  = "#D55E00",
+            "Necrotic"        = "#CC79A7"
+          )) +
+          facet_wrap(~ cell_line, scales = "free_x") +
+          labs(
+            title    = "Apoptosis Quadrant Breakdown by Concentration",
+            subtitle = "Annexin V/PI: Viable (−/−), Early (+/−), Late (+/+), Necrotic (−/+)",
+            x        = "Concentration (µM)",
+            y        = "Percentage (%)",
+            fill     = "Cell State"
+          ) +
+          theme_publication() +
+          theme(
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            strip.text  = element_text(size = 10, face = "bold")
+          )
+        
+        plot_quadrant <- p
+      }
+      
       # Save viability plot (PNG, SVG, PDF)
-      if(!is.null(rv$viability_plot_obj)) {
+      if (!is.null(plot_viability)) {
         ggsave(file.path(temp_dir, "viability_curves.png"),
-               plot = rv$viability_plot_obj,
+               plot = plot_viability,
                width = 12, height = 8, dpi = 300)
         ggsave(file.path(temp_dir, "viability_curves.svg"),
-               plot = rv$viability_plot_obj,
+               plot = plot_viability,
                width = 12, height = 8)
         ggsave(file.path(temp_dir, "viability_curves.pdf"),
-               plot = rv$viability_plot_obj,
+               plot = plot_viability,
                width = 12, height = 8)
       }
       
       # Save death plot (PNG, SVG, PDF)
-      if(!is.null(rv$death_plot_obj)) {
+      if (!is.null(plot_death)) {
         ggsave(file.path(temp_dir, "death_curves.png"),
-               plot = rv$death_plot_obj,
+               plot = plot_death,
                width = 12, height = 8, dpi = 300)
         ggsave(file.path(temp_dir, "death_curves.svg"),
-               plot = rv$death_plot_obj,
+               plot = plot_death,
                width = 12, height = 8)
         ggsave(file.path(temp_dir, "death_curves.pdf"),
-               plot = rv$death_plot_obj,
+               plot = plot_death,
                width = 12, height = 8)
       }
       
       # Save IC50/LD50 comparison plot (PNG, SVG, PDF)
-      if(!is.null(rv$comparison_plot_obj)) {
+      if (!is.null(plot_ic50_ld50)) {
         ggsave(file.path(temp_dir, "ic50_ld50_comparison.png"),
-               plot = rv$comparison_plot_obj,
+               plot = plot_ic50_ld50,
                width = 10, height = 6, dpi = 300)
         ggsave(file.path(temp_dir, "ic50_ld50_comparison.svg"),
-               plot = rv$comparison_plot_obj,
+               plot = plot_ic50_ld50,
                width = 10, height = 6)
         ggsave(file.path(temp_dir, "ic50_ld50_comparison.pdf"),
-               plot = rv$comparison_plot_obj,
+               plot = plot_ic50_ld50,
                width = 10, height = 6)
       }
       
       # Save quadrant breakdown plot (PNG, SVG, PDF)
-      if(!is.null(rv$quadrant_plot_obj)) {
+      if (!is.null(plot_quadrant)) {
         ggsave(file.path(temp_dir, "quadrant_breakdown.png"),
-               plot = rv$quadrant_plot_obj,
+               plot = plot_quadrant,
                width = 14, height = 10, dpi = 300)
         ggsave(file.path(temp_dir, "quadrant_breakdown.svg"),
-               plot = rv$quadrant_plot_obj,
+               plot = plot_quadrant,
                width = 14, height = 10)
         ggsave(file.path(temp_dir, "quadrant_breakdown.pdf"),
-               plot = rv$quadrant_plot_obj,
+               plot = plot_quadrant,
                width = 14, height = 10)
       }
       
+      # --- Build IC50/LD50 display table like the Results tab ---
+      ic50_display <- NULL
+      if (!is.null(rv$ic50_results) && !is.null(rv$ld50_results)) {
+        combined <- merge(rv$ic50_results, rv$ld50_results, by = "cell_line", all = TRUE)
+        combined <- combined %>%
+          mutate(
+            `IC50 [95% CI] µM` = ifelse(
+              is.na(IC50_uM), "N/A",
+              sprintf("%.2f [%.2f - %.2f]", IC50_uM, IC50_lower, IC50_upper)
+            ),
+            `LD50 [95% CI] µM` = ifelse(
+              is.na(LD50_uM), "N/A",
+              sprintf("%.2f [%.2f - %.2f]", LD50_uM, LD50_lower, LD50_upper)
+            )
+          )
+        ic50_display <- combined[, c("cell_line", "IC50 [95% CI] µM", "LD50 [95% CI] µM")]
+        colnames(ic50_display)[1] <- "Cell Line"
+      }
+      
+      # --- Capture stats_comparison text into a string ---
+      ic50_stats_text <- NULL
+      if (!is.null(rv$ic50_results) && nrow(rv$ic50_results) >= 2) {
+        ic50_stats_text <- paste(
+          capture.output({
+            cat("=== STATISTICAL COMPARISON OF IC50 VALUES ===\n\n")
+            cat("Cell Line IC50 Summary:\n")
+            print(rv$ic50_results %>% dplyr::select(cell_line, IC50_uM))
+            cat("\nANOVA Test:\n")
+            cat("H0: All cell lines have equal IC50 values\n")
+            anova_result <- tryCatch(
+              aov(IC50_uM ~ cell_line, data = rv$ic50_results),
+              error = function(e) NULL
+            )
+            if (!is.null(anova_result)) {
+              print(summary(anova_result))
+            } else {
+              cat("ANOVA could not be performed.\n")
+            }
+          }),
+          collapse = "\n"
+        )
+      }
+      
+      
+      # --- Prepare parameters for the R Markdown report ---
+      analysis_settings <- data.frame(
+        control_concentration_uM = rv$control_concentration,
+        compensation_applied      = rv$comp_calculated,
+        normalization_applied     = input$use_normalization
+      )
+      
+      file_metadata <- rv$metadata[, c("name", "cell_line", "treatment_full", "concentration_uM", "replicate")]
+      colnames(file_metadata)[1] <- "filename"
+      
+      comp_df <- NULL
+      if (rv$comp_calculated) {
+        comp_df <- as.data.frame(rv$comp_matrix)
+        comp_df <- cbind(Channel = rownames(comp_df), comp_df)
+      }
+      
+      # --- Render the HTML report with rmarkdown (fail-safe) ---
+      report_file <- file.path(temp_dir, "FACS_IC50_report.html")
+
+      tryCatch(
+        {
+          rmarkdown::render(
+            input       = normalizePath("facs_report.Rmd"),      # same directory as app.R
+            output_file = report_file,
+            params = list(
+              analysis_settings = analysis_settings,
+              ic50_table        = ic50_display,
+              ld50_table        = rv$ld50_results,
+              qc_table          = rv$qc_data,
+              advanced_metrics  = rv$advanced_metrics,
+              results_raw       = rv$results,
+              cell_counts       = rv$cell_counts,
+              comp_matrix       = comp_df,
+              file_metadata     = file_metadata,
+              ic50_stats        = ic50_stats_text,
+              viability_plot    = plot_viability,
+              death_plot        = plot_death,
+              comp_plot         = rv$comp_plot_obj,      # compensation plot still comes from earlier
+              ic50_ld50_plot    = plot_ic50_ld50,
+              quadrant_plot     = plot_quadrant,
+              gate_summary      = gate_summary,
+              gate_plots        = rv$gate_plots
+            ),
+            envir = new.env(parent = globalenv()),
+            quiet = TRUE
+          )
+        },
+        error = function(e) {
+          # optional: show a notification inside the app
+          showNotification(
+            paste("Report generation failed:", e$message),
+            type    = "error",
+            duration = 10
+          )
+        }
+      )
+
+      if (!file.exists(report_file)) {
+        stop("FACS_IC50_report.html was not generated — check pandoc or Rmd path")
+      }
+
       # Create ZIP file
       files_to_zip <- list.files(temp_dir, full.names = TRUE)
-      files_to_zip <- files_to_zip[grep("IC50_|LD50_|raw_|file_|analysis_|compensation_|viability_|death_|ic50_ld50_|quadrant_|QC_|outlier_|cell_counts_|advanced_|gate_",
-                                        basename(files_to_zip))]
-      
+      files_to_zip <- files_to_zip[grep(
+        "IC50_|LD50_|raw_|file_|analysis_|compensation_|viability_|death_|ic50_ld50_|quadrant_|QC_|outlier_|cell_counts_|advanced_|gate_|FACS_IC50_report\\\\.html",
+        basename(files_to_zip)
+      )]
+
       zip::zip(zipfile = file, files = files_to_zip, mode = "cherry-pick")
     },
     contentType = "application/zip"
   )
-}
+}  # end of server()
 
 # ============================================================================
 # LAUNCH APP
