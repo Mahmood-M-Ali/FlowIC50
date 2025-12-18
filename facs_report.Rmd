@@ -1,0 +1,342 @@
+---
+title: "Flow Cytometry Dose–Response Report"
+
+output:
+
+  html_document:
+
+  toc: true
+
+  toc_depth: 3
+
+  theme: cosmo
+  
+  highlight: tango
+  
+  df_print: paged
+
+params:
+
+  analysis_settings: NULL
+  
+  ic50_table: NULL
+  
+  ld50_table: NULL
+  
+  qc_table: NULL
+  
+  advanced_metrics: NULL
+  
+  results_raw: NULL
+  
+  cell_counts: NULL
+  
+  comp_matrix: NULL
+  
+  file_metadata: NULL
+  
+  ic50_stats: NULL
+  
+  viability_plot: NULL
+  
+  death_plot: NULL
+  
+  comp_plot: NULL
+  
+  ic50_ld50_plot: NULL
+  
+  quadrant_plot: NULL
+  
+  gate_summary: NULL
+  
+  gate_plots: NULL
+
+---
+
+```{r setup, include=FALSE}
+
+library(ggplot2)
+
+library(dplyr)
+
+library(kableExtra)
+
+knitr::opts_chunk$set(
+
+echo    = FALSE,  # hide code in all chunks
+
+message = FALSE,
+
+warning = FALSE
+
+)
+
+```
+
+## 1. Overview
+
+```{r results='asis'}
+analysis_settings <- params$analysis_settings
+
+if (!is.null(analysis_settings)) {
+
+  cat("**Control concentration (µM):** ",
+      analysis_settings$control_concentration_uM, "\n\n")
+
+  cat("**Compensation applied:** ",
+      ifelse(analysis_settings$compensation_applied, "Yes", "No"), "\n\n")
+
+  cat("**Normalization to control:** ",
+      ifelse(analysis_settings$normalization_applied, "Yes", "No"), "\n\n")
+
+} else {
+
+  cat("No analysis settings available.\n")
+
+}
+
+```
+
+## 2. File metadata
+
+```{r}
+
+file_metadata <- params$file_metadata
+
+if (!is.null(file_metadata) && nrow(file_metadata) > 0) {
+
+file_metadata %>%
+
+arrange(cell_line, concentration_uM, replicate) %>%
+
+kable("html", caption = "Input FCS files and parsed metadata") %>%
+
+kable_styling(full_width = FALSE)
+
+} else {
+
+cat("No file metadata available.\n")
+
+}
+
+```
+
+## 3.A Gating and cell counts
+
+```{r}
+
+cell_counts <- params$cell_counts
+
+if (!is.null(cell_counts) && nrow(cell_counts) > 0) {
+
+cell_counts %>%
+
+arrange(cell_line, concentration_uM, replicate) %>%
+
+kable(
+
+"html",
+
+digits  = 0,
+
+caption = "Cell counts at each gating step"
+
+) %>%
+
+kable_styling(full_width = FALSE)
+
+} else {
+
+cat("No cell count data available.\n")
+
+}
+
+```
+
+## 3B. Gate review
+
+```{r results='asis'}
+
+gate_summary <- params$gate_summary
+
+if (!is.null(gate_summary) && nrow(gate_summary) > 0) {
+
+gate_summary %>%
+
+dplyr::select(
+
+`Cell Line`          = cell_line,
+
+`FSC/SSC points`     = fsc_ssc_points,
+
+`Singlet points`     = singlet_points,
+
+`Annexin threshold`  = annexin_threshold,
+
+`PI threshold`       = pi_threshold
+
+) %>%
+
+kable(
+
+"html",
+
+digits  = 2,
+
+caption = "Saved gates per cell line"
+
+) %>%
+
+kable_styling(full_width = FALSE)
+
+} else {
+
+cat("No gate information available.\n")
+
+}
+
+```
+
+```{r}
+
+gate_plots <- params$gate_plots
+
+if (!is.null(gate_plots) && length(gate_plots) > 0) {
+  for (line in names(gate_plots)) {
+    cat("### FSC/SSC Gate – ", line, "\n\n")
+    print(gate_plots[[line]])
+    cat("\n\n")
+  }
+} else {
+  cat("No gate plots available.\n")
+}
+
+```
+
+
+## 4. Compensation
+
+```{r}
+
+comp_matrix <- params$comp_matrix
+
+if (!is.null(comp_matrix)) {
+
+comp_matrix %>%
+
+kable("html", caption = "Compensation matrix (inverse spillover)") %>%
+
+kable_styling(full_width = FALSE)
+
+}
+
+if (!is.null(params$comp_plot)) {
+
+print(params$comp_plot)
+
+}
+
+```
+
+## 5. IC50 / LD50 results
+
+```{r}
+
+ic50_table       <- params$ic50_table
+
+advanced_metrics <- params$advanced_metrics
+
+ic50_stats       <- params$ic50_stats
+
+if (!is.null(ic50_table)) {
+
+ic50_table %>%
+
+kable("html", caption = "IC50 / LD50 with 95% CI") %>%
+
+kable_styling(full_width = FALSE)
+
+}
+
+if (!is.null(advanced_metrics) && nrow(advanced_metrics) > 0) {
+
+advanced_metrics %>%
+
+kable(
+
+"html",
+
+digits  = 3,
+
+caption = "Extended dose–response metrics"
+
+) %>%
+
+kable_styling(full_width = FALSE)
+
+}
+
+if (!is.null(ic50_stats)) {
+  cat("### Statistical comparison of IC50 values\n\n")
+  cat(ic50_stats, sep = "\n")
+  cat("\n")
+}
+
+```
+
+## 6. Quality control
+
+```{r}
+
+qc_table <- params$qc_table
+
+if (!is.null(qc_table) && nrow(qc_table) > 0) {
+
+  # Add Status column like in the Shiny app
+  qc_table <- qc_table %>%
+    dplyr::mutate(
+      Status = dplyr::case_when(
+        cv_pct < 15 ~ "✓ Good",
+        cv_pct < 25 ~ "⚠ Acceptable",
+        TRUE        ~ "✗ High Variability"
+      )
+    ) %>%
+    dplyr::select(
+      `Cell Line`          = cell_line,
+      `Concentration (µM)` = concentration_uM,
+      `Mean Viability (%)` = mean_viable,
+      `CV (%)`             = cv_pct,
+      n,
+      Status
+    )
+
+  cat("Coefficient of variation (CV%) by condition\n\n")
+  cat("CV% < 15%: Good | 15-25%: Acceptable | >25%: High variability\n\n")
+
+  qc_table %>%
+    kable(
+      "html",
+      digits  = 2,
+      caption = "Coefficient of variation (CV%) by condition"
+    ) %>%
+    kable_styling(full_width = FALSE)
+
+} else {
+  cat("No QC data available.\n")
+}
+
+```
+
+## 7. Plots
+
+```{r}
+
+if (!is.null(params$viability_plot))    print(params$viability_plot)
+
+if (!is.null(params$death_plot))        print(params$death_plot)
+
+if (!is.null(params$ic50_ld50_plot))    print(params$ic50_ld50_plot)
+
+if (!is.null(params$quadrant_plot))     print(params$quadrant_plot)
+
+```
