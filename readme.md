@@ -10,14 +10,14 @@
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 **No installation required.** Access the full suite directly at:  
 [https://huggingface.co/spaces/mahmood-iab/FACS-Analysis](https://huggingface.co/spaces/mahmood-iab/FACS-Analysis)
 
 ---
 
-## ✨ Key Enhancements (v3.0)
+## Key Enhancements (v3.0)
 
 - **Dual Analysis Engines:** Switch between specialized Apoptosis profiling and a new, combinatorial Multi-Channel Generic mode (up to $2^N$ populations).
 - **Absolute Quantification:** Integrated volumetric cell counting using counting beads (e.g., Precision Count Beads™).
@@ -29,7 +29,7 @@
 
 ---
 
-## 📁 File Naming Convention
+## File Naming Convention
 
 Files must follow this standardized format for automatic metadata extraction:  
 `CellLine_Treatment_ConcentrationuM_Replicate.fcs`
@@ -40,7 +40,7 @@ Files must follow this standardized format for automatic metadata extraction:
 
 ---
 
-## 🛠 Workflow
+## Workflow
 
 1. **Upload:** Add batch FCS files and optional single-stained controls.
 2. **Setup:** Select your analysis mode (Apoptosis vs. Generic) and enable Absolute Counting if beads were used.
@@ -52,7 +52,7 @@ Files must follow this standardized format for automatic metadata extraction:
 
 ---
 
-## 📊 Analytical Methodology
+## Analytical Methodology
 
 ### Curve Fitting
 Powered by the `drc` package, the app iteratively attempts:
@@ -67,7 +67,7 @@ Powered by the `drc` package, the app iteratively attempts:
 
 ---
 
-## 📦 Output Package (ZIP)
+## Output Package (ZIP)
 
 - **Technical Report:** Comprehensive HTML documentation of methodology, gating, and results.
 - **Data Tables:** CSV files for Raw Quadrant Data, IC50/EC50 Results, QC Metrics (CV%), and Tukey HSD Stats.
@@ -76,7 +76,7 @@ Powered by the `drc` package, the app iteratively attempts:
 
 ---
 
-## 💻 Local Installation
+## Local Installation
 
 Run locally in RStudio using the following dependencies:
 
@@ -93,9 +93,10 @@ install.packages(c("shiny", "bslib", "ggplot2", "dplyr", "tidyr", "readr",
 
 ---
 
-## 🎓 Developed By
+## Developed By
 
 **Mahmood Mohammed Ali**  
 Université Grenoble Alpes | Institute for Advanced Biosciences (IAB)  
 Epigenetics of Regeneration and Cancer Group  
 [mahmood.mohammed-ali@univ-grenoble-alpes.fr](mailto:mahmood.mohammed-ali@univ-grenoble-alpes.fr)
+
