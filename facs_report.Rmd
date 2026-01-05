@@ -1,342 +1,1450 @@
 ---
-title: "Flow Cytometry Dose–Response Report"
-
+title: "Flow Cytometry Dose-Response Analysis Report"
+subtitle: "Apoptosis Profiling and IC50/LD50 Determination"
+date: "Report Generated: `r format(Sys.time(), '%B %d, %Y | %H:%M')`"
 output:
-
   html_document:
-
-  toc: true
-
-  toc_depth: 3
-
-  theme: cosmo
-  
-  highlight: tango
-  
-  df_print: paged
-
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    theme: cosmo
+    highlight: tango
+    df_print: paged
+    # css: styles.css
+  pdf_document: default
 params:
-
   analysis_settings: NULL
-  
   ic50_table: NULL
-  
   ld50_table: NULL
-  
   qc_table: NULL
-  
   advanced_metrics: NULL
-  
   results_raw: NULL
-  
   cell_counts: NULL
-  
-  comp_matrix: NULL
-  
+  comp_matrices: NULL # Updated parameter
+  spill_matrices: NULL # NEW
   file_metadata: NULL
-  
   ic50_stats: NULL
-  
   viability_plot: NULL
-  
   death_plot: NULL
-  
-  comp_plot: NULL
-  
   ic50_ld50_plot: NULL
-  
   quadrant_plot: NULL
-  
   gate_summary: NULL
-  
   gate_plots: NULL
+  gate_review_plots: NULL
+  singlet_plots: NULL  
+  annexin_plots: NULL  
+  comp_plot: NULL 
+  manual_comp_preview_plots: NULL 
+  auto_comp_matrix: NULL # NEW parameter
+  auto_spill_matrix: NULL # NEW parameter
+  posthoc_results: NULL # NEW
+  excluded_data: NULL # NEW
+  outlier_flags: NULL # NEW
+  is_absolute_counting: FALSE # NEW
+  abs_ic50_table: NULL # NEW
+  abs_survival_plot: NULL # NEW
+  bead_gate_plots: NULL # NEW
+  bead_qc_plot: NULL # NEW
+  bead_impact_plot: NULL # NEW
+---
+
+<style>
+/* Professional Scientific Styling */
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=Roboto+Mono&display=swap');
+
+body {
+  font-family: 'Lato', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 11pt;
+  line-height: 1.6;
+  color: #333;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  background: #fafafa;
+}
+
+h1, h2, h3, h4 {
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+h1 {
+  font-size: 2.2em;
+  border-bottom: 3px solid #2c3e50;
+  padding-bottom: 10px;
+}
+
+h2 {
+  font-size: 1.6em;
+  border-bottom: 2px solid #3498db;
+  padding-bottom: 8px;
+  margin-top: 2em;
+}
+
+h3 {
+  font-size: 1.3em;
+  color: #2c3e50;
+  margin-top: 1.5em;
+}
+
+.title {
+  font-size: 2.5em;
+  font-weight: 700;
+  color: #1a1a1a;
+  text-align: center;
+  margin-bottom: 0.2em;
+}
+
+.subtitle {
+  font-size: 1.3em;
+  color: #555;
+  text-align: center;
+  margin-bottom: 0.5em;
+}
+
+.date {
+  text-align: center;
+  color: #777;
+  font-style: italic;
+  margin-bottom: 2em;
+}
+
+/* Executive Summary Box */
+.executive-summary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 25px;
+  border-radius: 8px;
+  margin: 30px 0;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.executive-summary h2 {
+  color: white;
+  border-bottom: 2px solid rgba(255,255,255,0.3);
+  margin-top: 0;
+}
+
+.executive-summary ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.executive-summary li {
+  padding: 8px 0;
+  padding-left: 25px;
+  position: relative;
+}
+
+.executive-summary li:before {
+  content: "\25BA";
+  position: absolute;
+  left: 0;
+  color: #ffd700;
+}
+
+/* Method Section Styling */
+.method-box {
+  background: #f8f9fa;
+  border-left: 4px solid #28a745;
+  padding: 20px;
+  margin: 20px 0;
+  border-radius: 4px;
+}
+
+.footer {
+  background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+  color: white;
+  padding: 40px 20px;
+  text-align: center;
+  margin-top: 50px;
+  border-radius: 8px;
+}
+
+.footer p {
+  margin: 5px 0;
+  color: white !important;
+}
+
+.footer a {
+  color: #60a5fa !important;
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+.footer .social-links {
+  margin: 15px 0;
+}
+
+.footer .social-links a {
+  margin: 0 10px;
+  color: white !important;
+  font-size: 1.1em;
+}
+
+/* Warning/Alert Boxes */
+.alert-box {
+  background: #fff3cd;
+  border-left: 4px solid #ffc107;
+  padding: 15px;
+  margin: 20px 0;
+  border-radius: 4px;
+}
+
+.success-box {
+  background: #d4edda;
+  border-left: 4px solid #28a745;
+  padding: 15px;
+  margin: 20px 0;
+  border-radius: 4px;
+}
+
+.alert-success {
+  padding: 15px;
+  border-left: 5px solid #28a745;
+  background-color: #d4edda;
+  color: #155724 !important;
+  margin-bottom: 20px;
+  border-radius: 4px;
+}
+
+.alert-warning {
+  padding: 15px;
+  border-left: 5px solid #ffc107;
+  background-color: #fff3cd;
+  color: #856404 !important;
+  margin-bottom: 20px;
+  border-radius: 4px;
+}
+
+.danger-box {
+  background: #f8d7da;
+  border-left: 4px solid #dc3545;
+  padding: 15px;
+  margin: 20px 0;
+  border-radius: 4px;
+}
+
+/* Table Styling - Paper Quality */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 20px 0;
+  background: white;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  font-size: 10pt;
+}
+
+thead {
+  background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+  color: white;
+}
+
+th {
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid #1a252f;
+}
+
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+tbody tr:hover {
+  background: #f5f5f5;
+}
+
+tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.table-caption {
+  font-size: 0.95em;
+  color: #555;
+  font-style: italic;
+  margin-top: 5px;
+  text-align: left;
+}
+
+/* Figure Styling */
+.figure {
+  margin: 30px 0;
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.figure-caption {
+  font-size: 0.9em;
+  color: #555;
+  margin-top: 10px;
+  text-align: center;
+  font-style: italic;
+}
+
+/* Code blocks */
+code {
+  font-family: 'Roboto Mono', monospace;
+  background: #f4f4f4;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+pre {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 15px;
+  overflow-x: auto;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.85em;
+}
+
+/* Metrics Cards */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  margin: 20px 0;
+}
+
+.metric-card {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  border-top: 4px solid #3498db;
+}
+
+.metric-value {
+  font-size: 2em;
+  font-weight: 700;
+  color: #2c3e50;
+  margin: 10px 0;
+}
+
+.metric-label {
+  font-size: 0.9em;
+  color: #777;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* TOC Styling */
+#TOC {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+#TOC ul {
+  list-style: none;
+}
+
+#TOC a {
+  color: #2c3e50;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+#TOC a:hover {
+  color: #3498db;
+}
+
+/* Footer Styling from App.R */
+.footer {
+  background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+  color: white;
+  padding: 30px 20px;
+  text-align: center;
+  margin-top: 50px;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+  width: 100%;
+  border-radius: 8px;
+}
+.footer p { margin: 8px 0; font-size: 1em; color: white !important; }
+.footer strong { color: white !important; }
+.footer .social-links {
+  margin: 15px 0; display: flex; justify-content: center; gap: 20px;
+  align-items: center; flex-wrap: wrap;
+}
+.footer .social-links a {
+  display: inline-flex; align-items: center; gap: 8px; color: white !important;
+  text-decoration: none; transition: all 0.3s; padding: 8px 15px;
+  border-radius: 5px; background: rgba(255,255,255,0.1); font-size: 0.95em;
+}
+.footer .social-links a:hover {
+  background: rgba(255,255,255,0.2); transform: translateY(-2px); text-decoration: none;
+}
+</style>
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(kableExtra)
+library(knitr)
+library(scales)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = 'center',
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+# Define the transformation function used in the plots
+# This ensures ggplot objects passed via params can render correctly
+pseudo_log_trans_for_breaks <- function() {
+  scales::trans_new(
+    "pseudo_log_for_breaks",
+    function(x) log10(x + 0.1), # Offset by 0.1 as used in the plot
+    function(x) 10^x - 0.1,
+    domain = c(0, Inf)
+  )
+}
+
+# Helper for custom log labels (0, 1, 10, 100, 10^3...)
+custom_log_labels <- function(breaks) {
+  lapply(breaks, function(x) {
+    if (is.na(x) || !is.finite(x)) return("")
+    if (x == 0) return("0")
+    
+    # Standard pretty range (0.01 to 1000)
+    if (abs(x) >= 0.01 && abs(x) < 1000) {
+       # Check if integer
+       if (abs(x - round(x)) < 1e-10) return(as.character(round(x)))
+       # Else return as is, trimming trailing zeros
+       s <- format(x, scientific = FALSE, trim = TRUE)
+       if (grepl("\\.", s)) s <- sub("0+$", "", s)
+       return(sub("\\.$", "", s))
+    }
+    
+    # Pretty scientific notation for very large or very small numbers
+    log_x <- log10(abs(x))
+    exponent <- floor(log_x)
+    coefficient <- x / (10^exponent)
+    
+    if (abs(coefficient - 1) < 1e-10) {
+      return(bquote(10^.(exponent)))
+    } else {
+      # Use 1 decimal place for coefficient if needed, otherwise clean
+      coeff_formatted <- sub("\\.0+$", "", sprintf("%.1f", coefficient))
+      return(bquote(.(coeff_formatted) %*% 10^.(exponent)))
+    }
+  })
+}
+
+# Helper function for professional tables
+render_table <- function(data, caption = NULL) {
+  # Clean data: Replace HTML entities that might break PDF/HTML rendering consistency
+  # and format numeric columns
+  data_clean <- data %>%
+    mutate(across(where(is.numeric), ~ round(.x, 2))) %>%
+    # Remove HTML entities if any persist
+    mutate(across(everything(), ~ gsub("&#10003;", "✓", .x))) %>%
+    mutate(across(everything(), ~ gsub("&#9888;", "⚠", .x))) %>%
+    mutate(across(everything(), ~ gsub("&#10007;", "✗", .x)))
+
+  data_clean %>%
+    kable("html", caption = caption, escape = FALSE) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "center"
+    ) %>%
+    row_spec(0, bold = TRUE, color = "white", background = "#2c3e50")
+}
+```
 
 ---
 
-```{r setup, include=FALSE}
+# Executive Summary
 
-library(ggplot2)
+```{r results='asis'}
+# Dynamic executive summary generation
+ic50_table <- params$ic50_table
+ld50_table <- params$ld50_table
+qc_table <- params$qc_table
+analysis_settings <- params$analysis_settings
 
-library(dplyr)
+cat('<div class="executive-summary">\n')
+cat('<h2>Key Findings</h2>\n')
+cat('<ul>\n')
 
-library(kableExtra)
+# Sample count
+if (!is.null(params$file_metadata)) {
+  n_samples <- nrow(params$file_metadata)
+  n_lines <- length(unique(params$file_metadata$cell_line))
+  cat(sprintf('<li><strong>Dataset:</strong> %d samples analyzed across %d cell line(s)</li>\n', 
+              n_samples, n_lines))
+}
 
-knitr::opts_chunk$set(
+# IC50 Results
+if (!is.null(ic50_table) && nrow(ic50_table) > 0) {
+  
+  # Try to find Viability IC50 column
+  viab_col <- names(ic50_table)[grep("Viability", names(ic50_table))][1]
+  
+  if (!is.na(viab_col)) {
+    # Safely extract numeric IC50 values
+    ic50_vals <- ic50_table %>%
+      mutate(
+        IC50_num = suppressWarnings(as.numeric(sub(" \\[.*", "", .data[[viab_col]])))
+      ) %>%
+      filter(!is.na(IC50_num), IC50_num > 0)
 
-echo    = FALSE,  # hide code in all chunks
+    if (nrow(ic50_vals) > 0) {
+      min_ic50 <- ic50_vals %>% filter(IC50_num == min(IC50_num))
+      max_ic50 <- ic50_vals %>% filter(IC50_num == max(IC50_num))
+      
+      cat(sprintf('<li><strong>Most Sensitive (Viability):</strong> %s (IC50 = %s)</li>\n',
+                  min_ic50$`Cell Line`[1], min_ic50[[viab_col]][1]))
+      cat(sprintf('<li><strong>Most Resistant (Viability):</strong> %s (IC50 = %s)</li>\n',
+                  max_ic50$`Cell Line`[1], max_ic50[[viab_col]][1]))
+    }
+  }
+}
 
-message = FALSE,
+# Absolute IC50 Results
+abs_ic50_table <- params$abs_ic50_table
+if (params$is_absolute_counting && !is.null(abs_ic50_table) && nrow(abs_ic50_table) > 0) {
+  abs_vals <- abs_ic50_table %>%
+    mutate(
+      IC50_num = suppressWarnings(as.numeric(sub(" \\[.*", "", `Abs. IC50 [95% CI] µM`)))
+    )
+    
+  if (any(!is.na(abs_vals$IC50_num))) {
+    min_abs <- abs_vals %>% filter(IC50_num == min(IC50_num, na.rm = TRUE))
+    max_abs <- abs_vals %>% filter(IC50_num == max(IC50_num, na.rm = TRUE))
+    
+    if (nrow(min_abs) > 0 && nrow(max_abs) > 0) {
+      cat(sprintf('<li><strong>Most Sensitive (Absolute):</strong> %s (IC50 = %s µM)</li>\n',
+                  min_abs$`Cell Line`[1], min_abs$`Abs. IC50 [95% CI] µM`[1]))
+    }
+  }
+}
 
-warning = FALSE
+# QC Warnings
+if (!is.null(qc_table) && nrow(qc_table) > 0) {
+  high_cv <- qc_table %>% filter(cv_pct > 25)
+  if (nrow(high_cv) > 0) {
+    cat(sprintf('<li><strong><span style="font-family: sans-serif;">&#9888;</span> Quality Alert:</strong> %d condition(s) with CV &gt; 25%%</li>\n',
+                nrow(high_cv)))
+  } else {
+    cat('<li><strong>✓ Quality Status:</strong> All replicates within acceptable CV limits</li>\n')
+  }
+}
 
-)
+# Compensation status
+if (!is.null(analysis_settings)) {
+  if (analysis_settings$compensation_applied) {
+    cat('<li><strong>Compensation:</strong> Applied using control-based matrix</li>\n')
+  }
+  if (analysis_settings$normalization_applied) {
+    cat('<li><strong>Normalization:</strong> Viability normalized to control (100%)</li>\n')
+  }
+}
 
+cat('</ul>\n')
+cat('</div>\n')
 ```
 
-## 1. Overview
+---
+
+# 1. Materials and Methods
+
+## 1.1 Experimental Design
 
 ```{r results='asis'}
 analysis_settings <- params$analysis_settings
-
-if (!is.null(analysis_settings)) {
-
-  cat("**Control concentration (µM):** ",
-      analysis_settings$control_concentration_uM, "\n\n")
-
-  cat("**Compensation applied:** ",
-      ifelse(analysis_settings$compensation_applied, "Yes", "No"), "\n\n")
-
-  cat("**Normalization to control:** ",
-      ifelse(analysis_settings$normalization_applied, "Yes", "No"), "\n\n")
-
-} else {
-
-  cat("No analysis settings available.\n")
-
-}
-
-```
-
-## 2. File metadata
-
-```{r}
-
 file_metadata <- params$file_metadata
 
-if (!is.null(file_metadata) && nrow(file_metadata) > 0) {
+cat('<div class="method-box">\n')
 
-file_metadata %>%
-
-arrange(cell_line, concentration_uM, replicate) %>%
-
-kable("html", caption = "Input FCS files and parsed metadata") %>%
-
-kable_styling(full_width = FALSE)
-
-} else {
-
-cat("No file metadata available.\n")
-
+if (!is.null(analysis_settings)) {
+  cat(sprintf('<p><strong>Control concentration:</strong> %s µM</p>\n',
+              analysis_settings$control_concentration_uM))
+  cat(sprintf('<p><strong>Fluorescence compensation:</strong> %s</p>\n',
+              ifelse(analysis_settings$compensation_applied, "Applied", "Not applied")))
+  cat(sprintf('<p><strong>Normalization:</strong> %s</p>\n',
+              ifelse(analysis_settings$normalization_applied, 
+                     "Viability normalized to control (100%)", "Raw values")))
 }
 
-```
-
-## 3.A Gating and cell counts
-
-```{r}
-
-cell_counts <- params$cell_counts
-
-if (!is.null(cell_counts) && nrow(cell_counts) > 0) {
-
-cell_counts %>%
-
-arrange(cell_line, concentration_uM, replicate) %>%
-
-kable(
-
-"html",
-
-digits  = 0,
-
-caption = "Cell counts at each gating step"
-
-) %>%
-
-kable_styling(full_width = FALSE)
-
-} else {
-
-cat("No cell count data available.\n")
-
+if (!is.null(file_metadata)) {
+  n_reps <- file_metadata %>%
+    group_by(cell_line, concentration_uM) %>%
+    summarise(n = n(), .groups = "drop")
+  
+  cat(sprintf('<p><strong>Replicates per condition:</strong> %d - %d</p>\n',
+              min(n_reps$n), max(n_reps$n)))
 }
 
+cat('</div>\n')
 ```
 
-## 3B. Gate review
+### 1.1.1 Sample Information
 
 ```{r results='asis'}
+df_meta <- params$file_metadata
 
-gate_summary <- params$gate_summary
+if (!is.null(df_meta) && nrow(df_meta) > 0) {
+  # Standardize column names if missing
+  if(!"treatment_full" %in% colnames(df_meta)) df_meta$treatment_full <- "N/A"
+  if(!"name" %in% colnames(df_meta)) df_meta$name <- "N/A"
 
-if (!is.null(gate_summary) && nrow(gate_summary) > 0) {
-
-gate_summary %>%
-
-dplyr::select(
-
-`Cell Line`          = cell_line,
-
-`FSC/SSC points`     = fsc_ssc_points,
-
-`Singlet points`     = singlet_points,
-
-`Annexin threshold`  = annexin_threshold,
-
-`PI threshold`       = pi_threshold
-
-) %>%
-
-kable(
-
-"html",
-
-digits  = 2,
-
-caption = "Saved gates per cell line"
-
-) %>%
-
-kable_styling(full_width = FALSE)
-
-} else {
-
-cat("No gate information available.\n")
-
+  # Step-by-step formatting
+  df_display <- df_meta[, c("cell_line", "treatment_full", "concentration_uM", "replicate")]
+  colnames(df_display) <- c("Cell Line", "Treatment", "Concentration (µM)", "Replicate")
+  
+  render_table(df_display, caption = "Table 1: Input sample metadata and FCS file inventory")
 }
 
+# NEW: Exclusion Report
+if (!is.null(params$excluded_data) && length(params$excluded_data) > 0) {
+  cat('<h3>1.1.2 Data Exclusion</h3>\n')
+  cat('<div class="danger-box">\n')
+  cat(sprintf('<p><strong>Note:</strong> %d replicate(s) were manually excluded from the analysis based on quality control review.</p>\n', length(params$excluded_data)))
+  cat('</div>\n')
+  
+  # Parse IDs to show readable table
+  # IDs are "CellLine_Conc_Rep"
+  ids <- params$excluded_data
+  # Convert to DF for display
+  excl_df <- data.frame(ID = ids) %>%
+    tidyr::separate(ID, into = c("Cell Line", "Concentration", "Replicate"), sep = "_", extra = "merge")
+  
+  render_table(excl_df, caption = "Table 1b: Excluded Replicates")
+}
 ```
 
-```{r}
+## 1.2 Flow Cytometry Gating Strategy
 
+### 1.2.1 Overview
+
+The gating strategy employed a sequential approach to identify cell populations:
+
+```{r results='asis'}
+if (params$is_absolute_counting) {
+  cat('1. **Bead Gating (Step 0)**: Identification of high-fluorescence counting beads for absolute quantification\n')
+  cat('2. **FSC-A vs SSC-A**: Discrimination of cells from debris (excluding beads)\n')
+  cat('3. **FSC-A vs FSC-H**: Singlet discrimination\n')
+  cat('4. **Annexin V-FITC vs PI**: Apoptosis classification\n')
+} else {
+  cat('1. **FSC-A vs SSC-A**: Discrimination of cells from debris\n')
+  cat('2. **FSC-A vs FSC-H**: Singlet discrimination\n')
+  cat('3. **Annexin V-FITC vs PI**: Apoptosis classification\n')
+}
+```
+
+```{r results='asis'}
+gate_summary <- params$gate_summary
+# ... (rest of the summary code)
+```
+
+### 1.2.2 Step 0: Bead Gating (if applicable)
+
+```{r results='asis', fig.height=6, fig.width=8}
+bead_plots <- params$bead_gate_plots
+
+if (params$is_absolute_counting && !is.null(bead_plots) && length(bead_plots) > 0) {
+  for (line in names(bead_plots)) {
+    cat('<div class="figure">\n')
+    cat(sprintf('<h4>%s (Beads)</h4>\n', line))
+    print(bead_plots[[line]])
+    cat('<p class="figure-caption">Figure: Bead identification gate. High-fluorescence events were gated using FSC-A vs Fluorescence. These events are counted separately and excluded from all subsequent cell-related gates.</p>\n')
+    cat('</div>\n')
+    cat('<hr style="margin: 30px 0;">\n')
+  }
+} else if (params$is_absolute_counting) {
+  cat('<p><em>Bead gate visualization not available</em></p>\n')
+} else {
+  cat('<p><em>Absolute cell counting was not performed for this analysis.</em></p>\n')
+}
+```
+
+```{r results='asis', fig.height=12, fig.width=14}
+if (params$is_absolute_counting && !is.null(params$bead_qc_plot)) {
+  cat('### 1.2.2b Bead Counting Quality Control\n')
+  cat('<div class="figure">\n')
+  # Increase plot size for better legibility of facets
+  print(params$bead_qc_plot + theme(plot.title = element_text(size = 12)))
+  cat('<p class="figure-caption">Figure 1b: Bead count stability. Consistent bead counts across replicates indicate precise pipetting. High variability (>10% CV) suggests potential technical errors.</p>\n')
+  cat('</div>\n')
+  
+  if (!is.null(params$bead_impact_plot)) {
+     cat('<div class="figure">\n')
+     print(params$bead_impact_plot + theme(plot.title = element_text(size = 12)))
+     cat('<p class="figure-caption">Figure 1c: Impact of Absolute Quantification. Comparison between raw flow cytometer events (uncorrected) and the final absolute cell concentration (cells/µL) derived using the bead factor.</p>\n')
+     cat('</div>\n')
+  }
+}
+```
+
+### 1.2.3 Gate 1: Cell Population (FSC-A vs SSC-A)
+
+```{r results='asis', fig.height=6, fig.width=8}
 gate_plots <- params$gate_plots
 
 if (!is.null(gate_plots) && length(gate_plots) > 0) {
   for (line in names(gate_plots)) {
-    cat("### FSC/SSC Gate – ", line, "\n\n")
+    cat('<div class="figure">\n')
+    cat(sprintf('<h4>%s</h4>\n', line))
     print(gate_plots[[line]])
-    cat("\n\n")
+    cat('<p class="figure-caption">Figure: FSC-A vs SSC-A gating for cell population identification. Red polygon indicates the gate boundary used to exclude debris and non-cellular events.</p>\n')
+    cat('</div>\n')
+    cat('<hr style="margin: 30px 0;">\n')
   }
 } else {
-  cat("No gate plots available.\n")
+  cat('<p><em>Gate visualization not available</em></p>\n')
 }
-
 ```
 
+### 1.2.4 Gate 2: Singlet Discrimination (FSC-A vs FSC-H)
 
-## 4. Compensation
+**Principle:** Singlet gating exploits the linear relationship between FSC-A (area) and FSC-H (height) for single cells. Cell doublets and aggregates exhibit disproportionately high FSC-A relative to FSC-H, appearing above the diagonal.
 
-```{r}
+```{r results='asis', fig.height=6, fig.width=8}
+singlet_plots <- params$singlet_plots
 
-comp_matrix <- params$comp_matrix
-
-if (!is.null(comp_matrix)) {
-
-comp_matrix %>%
-
-kable("html", caption = "Compensation matrix (inverse spillover)") %>%
-
-kable_styling(full_width = FALSE)
-
+if (!is.null(singlet_plots) && length(singlet_plots) > 0) {
+  for (line in names(singlet_plots)) {
+    cat('<div class="figure">\n')
+    cat(sprintf('<h4>%s</h4>\n', line))
+    print(singlet_plots[[line]])
+    cat('<p class="figure-caption">Figure: FSC-A vs FSC-H singlet discrimination. Red polygon encloses single cells following the FSC-A/FSC-H diagonal. Events above the gate represent doublets and cell aggregates.</p>\n')
+    cat('</div>\n')
+    cat('<hr style="margin: 30px 0;">\n')
+  }
+} else {
+  cat('<div class="method-box">\n')
+  cat('<p><strong>Singlet Gating Strategy:</strong> Cells were further gated using FSC-A vs FSC-H to discriminate singlets from doublets. Events falling along the diagonal (FSC-A ≈ FSC-H) were selected as single cells, while events above the diagonal represent cell aggregates.</p>\n')
+  cat('<p>Expected singlet yield: 85-95% of the FSC/SSC-gated population.</p>\n')
+  cat('</div>\n')
 }
-
-if (!is.null(params$comp_plot)) {
-
-print(params$comp_plot)
-
-}
-
 ```
 
-## 5. IC50 / LD50 results
+### 1.2.5 Gate 3: Apoptosis Classification (Annexin V-FITC vs PI)
+
+**Principle:** Annexin V binds phosphatidylserine externalized during early apoptosis, while propidium iodide (PI) labels DNA in membrane-compromised cells. The combination enables discrimination of four cell states.
+
+```{r results='asis', fig.height=6, fig.width=8}
+annexin_plots <- params$annexin_plots
+
+if (!is.null(annexin_plots) && length(annexin_plots) > 0) {
+  for (line in names(annexin_plots)) {
+    cat('<div class="figure">\n')
+    cat(sprintf('<h4>%s</h4>\n', line))
+    print(annexin_plots[[line]])
+    cat('<p class="figure-caption">Figure: Annexin V-FITC vs PI four-quadrant classification. Red lines indicate threshold boundaries. <strong>Lower-left:</strong> Viable cells (Annexin⁻/PI⁻). <strong>Lower-right:</strong> Early apoptotic (Annexin⁺/PI⁻). <strong>Upper-right:</strong> Late apoptotic (Annexin⁺/PI⁺). <strong>Upper-left:</strong> Necrotic (Annexin⁻/PI⁺).</p>\n')
+    cat('</div>\n')
+    cat('<hr style="margin: 30px 0;">\n')
+  }
+} else {
+  cat('<div class="method-box">\n')
+  cat('<h4>Four-Quadrant Classification</h4>\n')
+  cat('<ul>\n')
+  cat('<li><strong>Q1 (Annexin⁻/PI⁺):</strong> Necrotic cells — Loss of membrane integrity without phosphatidylserine exposure</li>\n')
+  cat('<li><strong>Q2 (Annexin⁺/PI⁺):</strong> Late apoptotic/secondary necrotic cells — Both phosphatidylserine externalization and membrane permeability</li>\n')
+  cat('<li><strong>Q3 (Annexin⁺/PI⁻):</strong> Early apoptotic cells — Phosphatidylserine exposure with intact membrane</li>\n')
+  cat('<li><strong>Q4 (Annexin⁻/PI⁻):</strong> Viable cells — No apoptotic markers</li>\n')
+  cat('</ul>\n')
+  cat('</div>\n')
+}
+
+if (!is.null(gate_summary)) {
+  cat('<div class="method-box">\n')
+  cat('<p><strong>Threshold Optimization:</strong> Annexin V and PI thresholds were established using untreated control samples to achieve baseline viability of 70-95%, ensuring optimal separation between viable and apoptotic populations while minimizing false positives.</p>\n')
+  cat('</div>\n')
+}
+```
+
+### 1.2.6 Gating Strategy Visualization
+
+The following figures provide a comprehensive overview of the sequential gating strategy applied to each cell line.
+
+```{r results='asis', fig.height=6, fig.width=14}
+gate_plots <- params$gate_review_plots
+
+if (!is.null(gate_plots) && length(gate_plots) > 0) {
+  for (line in names(gate_plots)) {
+    cat('<div class="figure">\n')
+    cat(sprintf('<h4>Gating Strategy: %s</h4>\n', line))
+    
+    # Render the combined grob
+    grid::grid.draw(gate_plots[[line]])
+    
+    cat(sprintf('<p class="figure-caption">Figure: Sequential gating strategy for %s. Stages (from left to right): %s morphological classification (FSC/SSC and Singlets), and functional staining (Annexin V / PI).</p>\n', 
+                line, ifelse(params$is_absolute_counting, "Bead identification,", "")))
+    cat('</div>\n')
+    cat('\n\n')
+    cat('<hr style="margin: 30px 0;">\n')
+  }
+} else {
+  cat('<p><em>Comprehensive gating visualization not available.</em></p>\n')
+}
+```
+
+## 1.3 Fluorescence Compensation
+
+```{r results='asis', fig.show='asis'}
+comp_matrices <- params$comp_matrices
+spill_matrices <- params$spill_matrices
+comp_plot <- params$comp_plot
+manual_comp_preview_plots <- params$manual_comp_preview_plots
+auto_comp_matrix <- params$auto_comp_matrix
+auto_spill_matrix <- params$auto_spill_matrix
+
+if (!is.null(comp_matrices) && length(comp_matrices) > 0) {
+  
+  if (!is.null(comp_plot)) {
+    cat('<div class="figure">\n')
+    grid::grid.draw(comp_plot)
+    cat('<p class="figure-caption">Figure 2: Initial compensation effect visualization (automatic calculation). <strong>Top Row:</strong> Scatter plots showing the relationship between the primary and spillover channels before and after compensation. <strong>Bottom Row:</strong> Histograms overlaying the Unstained control (Grey), Primary channel (Blue), and Spillover channel (Red).</p>\n')
+    cat('</div>\n')
+  }
+
+  # 1. Initial Automatic Matrix and Plot
+  cat('<h3>1.3.1 Initial Calculation</h3>\n')
+  
+  if (!is.null(auto_spill_matrix)) {
+    cat(as.character(as.data.frame(auto_spill_matrix) %>%
+      render_table(caption = "Table 3.0a: Automatic Spillover Matrix (Measured)")))
+    cat("\n")
+  }
+
+  if (!is.null(auto_comp_matrix)) {
+    cat(as.character(as.data.frame(auto_comp_matrix) %>%
+      render_table(caption = "Table 3.0b: Automatic Inverse Compensation Matrix (Calculated)")))
+    cat("\n\n")
+  }
+
+  cat('<h3>1.3.2 Applied Compensation Settings</h3>\n')
+  cat('<div class="success-box">\n')
+  cat('<p><strong>Status:</strong> The following compensation settings were applied to the dataset. Variations indicate manual adjustments per cell line.</p>\n')
+  cat('</div>\n')
+  
+  # 2. Loop through unique matrices
+  # We identify unique INVERSE matrices (what is applied)
+  unique_mats <- unique(comp_matrices)
+  
+  for(i in seq_along(unique_mats)) {
+    mat <- unique_mats[[i]]
+    
+    # Find all cell lines using this specific inverse matrix
+    lines_with_this_mat <- names(comp_matrices)[sapply(comp_matrices, function(m) identical(m, mat))]
+    
+    # Retrieve the corresponding Spillover matrix from the first cell line in this group
+    # (Assumes that if Inverse is identical, Spillover is also identical)
+    rep_line <- lines_with_this_mat[1]
+    spill_mat_show <- NULL
+    if (!is.null(spill_matrices) && !is.null(spill_matrices[[rep_line]])) {
+      spill_mat_show <- spill_matrices[[rep_line]]
+    }
+    
+    cat(sprintf('<h4>Setting %d (Applied to: %s)</h4>', i, paste(lines_with_this_mat, collapse=", ")))
+    
+    if (!is.null(spill_mat_show)) {
+       cat(as.character(as.data.frame(spill_mat_show) %>%
+        render_table(caption = paste("Table 3.", i, "a: Spillover Matrix (User Editable)", sep=""))))
+       cat("\n")
+    }
+    
+    cat(as.character(as.data.frame(mat) %>%
+      render_table(caption = paste("Table 3.", i, "b: Inverse Compensation Matrix (Applied)", sep=""))))
+    cat("\n\n")
+    
+    # 3. Print manual adjustment figures for these specific cell lines
+    if (!is.null(params$manual_comp_preview_plots) && length(params$manual_comp_preview_plots) > 0) {
+      for (line in lines_with_this_mat) {
+        if (!is.null(params$manual_comp_preview_plots[[line]])) {
+          cat(sprintf('<h5>Manual Adjustment Preview: %s</h5>\n', line))
+          cat('<div class="figure">\n')
+          print(params$manual_comp_preview_plots[[line]])
+          cat(sprintf('<p class="figure-caption">Figure: Refined compensation preview for cell line %s.</p>\n', line))
+          cat('</div>\n')
+          cat('\n\n')
+        }
+      }
+    }
+    cat('<hr>\n')
+  }
+  
+} else {
+  cat('<div class="alert-box">\n')
+  cat('<p><strong>Note:</strong> No compensation was applied in this analysis.</p>\n')
+  cat('</div>\n')
+}
+```
+
+---
+
+# 2. Results
+
+## 2.1 Cell Recovery and Gating Efficiency
 
 ```{r}
+# 1. Check if data exists
+if (!is.null(params$cell_counts) && nrow(params$cell_counts) > 0) {
+  
+  # 2. Perform calculations first
+  df_counts <- params$cell_counts %>%
+    mutate(
+      pct_fsc_ssc = round(after_fsc_ssc / total_events * 100, 2),
+      pct_singlets = round(after_singlets / after_fsc_ssc * 100, 2),
+      pct_viable = round(viable_count / after_singlets * 100, 2),
+      pct_dead = round(dead_count / after_singlets * 100, 2)
+    ) %>%
+    arrange(cell_line, concentration_uM, replicate)
+    
+  # 3. Select columns by their RAW names first
+  df_final <- df_counts[, c("cell_line", "concentration_uM", "replicate", "total_events", 
+                            "after_fsc_ssc", "pct_fsc_ssc", "after_singlets", 
+                            "pct_singlets", "viable_count", "pct_viable", 
+                            "dead_count", "pct_dead")]
+  
+  # 4. Assign NEW names directly to the column names vector
+  # This is the "Safe Method" that avoids the unused arguments error
+  colnames(df_final) <- c("Cell Line", "Conc. (µM)", "Replicate", "Total Events", 
+                          "After FSC/SSC", "% After FSC/SSC", "Singlets", 
+                          "% After Singlets", "Viable", "% Viable", "Dead", "% Dead")
+  
+  # 5. Render the table with the finished object
+  render_table(df_final, caption = "Table 4: Cell counts and gating efficiency at each step")
+}
+```
 
-ic50_table       <- params$ic50_table
+## 2.2 IC50 and LD50 Determination
 
-advanced_metrics <- params$advanced_metrics
-
-ic50_stats       <- params$ic50_stats
+```{r}
+ic50_table <- params$ic50_table
 
 if (!is.null(ic50_table)) {
-
-ic50_table %>%
-
-kable("html", caption = "IC50 / LD50 with 95% CI") %>%
-
-kable_styling(full_width = FALSE)
-
+  ic50_table %>%
+    render_table(caption = "Table 5: Half-maximal inhibitory concentrations (IC50) and lethal dose 50% (LD50) with 95% confidence intervals")
+} else {
+  cat('<p><em>IC50/LD50 fitting failed for all cell lines. Check dose-response curve quality.</em></p>\n')
 }
+```
 
-if (!is.null(advanced_metrics) && nrow(advanced_metrics) > 0) {
+### 2.2.1 Dose-Response Curves
 
-advanced_metrics %>%
-
-kable(
-
-"html",
-
-digits  = 3,
-
-caption = "Extended dose–response metrics"
-
-) %>%
-
-kable_styling(full_width = FALSE)
-
+```{r results='asis', fig.height=7, fig.width=11}
+if (!is.null(params$viability_plot)) {
+  cat('<div class="figure">\n')
+  print(params$viability_plot)
+  cat('<p class="figure-caption">Figure 3: Viability dose-response curves with IC50 determination. Points represent mean ± SEM from biological replicates. Curves were fitted using four-parameter log-logistic (LL.4) or Weibull models.</p>\n')
+  cat('</div>\n')
 }
+```
+
+```{r results='asis', fig.height=7, fig.width=11}
+if (!is.null(params$death_plot)) {
+  cat('<div class="figure">\n')
+  print(params$death_plot)
+  cat('<p class="figure-caption">Figure 4: Cell death dose-response curves with LD50 determination. For this analysis, "Cell Death" is defined as the sum of all non-viable populations: Early Apoptotic (Annexin V+/PI-), Late Apoptotic/Secondary Necrotic (Annexin V+/PI+), and Necrotic (Annexin V-/PI+).</p>\n')
+  cat('</div>\n')
+}
+```
+
+### 2.2.2 Comparative Analysis
+
+```{r results='asis', fig.height=6, fig.width=10}
+if (!is.null(params$ic50_ld50_plot)) {
+  cat('<div class="figure">\n')
+  print(params$ic50_ld50_plot)
+  cat('<p class="figure-caption">Figure 5: Comparison of IC50 (viability reduction) and LD50 (death induction) values across cell lines. Numerical values indicate the concentration in µM.</p>\n')
+  cat('</div>\n')
+}
+```
+
+```{r results='asis'}
+if (params$is_absolute_counting) {
+  cat('## 2.3 Absolute Survival Determination (Bead-Normalized)\n\n')
+  cat('This section presents results corrected for total cell lysis. By using internal counting beads, we can identify "hidden" cell death where cells disintegrate and disappear from the gated population.\n\n')
+  
+  if (!is.null(params$abs_ic50_table)) {
+    params$abs_ic50_table %>%
+      render_table(caption = "Table 6: Absolute survival IC50 results with 95% confidence intervals")
+  }
+  
+  if (!is.null(params$abs_survival_plot)) {
+    cat('<div class="figure">\n')
+    print(params$abs_survival_plot)
+    cat('<p class="figure-caption">Figure 6: Absolute survival dose-response curves. Survival is calculated as (Absolute cells/µL in treated sample) / (Absolute cells/µL in control). This metric captures the total reduction in cell number across the entire experiment.</p>\n')
+    cat('</div>\n')
+  }
+}
+```
+
+## 2.4 Extended Pharmacodynamic Metrics
+
+```{r}
+# 1. Assign data to a local variable
+advanced_metrics_data <- params$advanced_metrics
+
+# 2. Safety check
+if (!is.null(advanced_metrics_data) && nrow(advanced_metrics_data) > 0) {
+  
+  # 3. Create a clean display copy with the original column names
+  # This ensures we only use columns that actually exist in the data
+  df_adv_final <- advanced_metrics_data[, c("cell_line", "metric_type", "EC25_uM", 
+                                            "EC75_uM", "EC90_uM", "Hill_slope", 
+                                            "Top_plateau", "Bottom_plateau", "AUC", "R_squared")]
+  
+  # 4. Assign the professional display names directly to the columns
+  # This avoids the "unused arguments" error triggered by the rename() function
+  colnames(df_adv_final) <- c("Cell Line", "Metric Type", "EC25 (µM)", "EC75 (µM)", 
+                              "EC90 (µM)", "Hill Slope", "Top (%)", "Bottom (%)", "AUC", "R²")
+  
+  # 5. Render the table using the finished, renamed object
+  render_table(df_adv_final, caption = "Table 6: Extended dose-response metrics")
+}
+```
+
+**Interpretation Guide:**
+
+- **EC25/EC75/EC90**: Effective concentrations producing 25%, 75%, and 90% of maximum effect
+- **Hill Slope**: Steepness of dose-response curve (higher = steeper transition)
+- **Top/Bottom Plateau**: Maximum and minimum response values
+- **AUC**: Area under the curve (total drug exposure metric)
+- **R²**: Goodness of fit (values > 0.95 indicate excellent fit)
+
+## 2.5 Apoptosis Profile
+
+```{r results='asis', fig.height=8, fig.width=12}
+if (!is.null(params$quadrant_plot)) {
+  cat('<div class="figure">\n')
+  print(params$quadrant_plot)
+  cat('<p class="figure-caption">Figure 7: Apoptosis quadrant breakdown. The stacked bars illustrate the relative proportions of Viable (Annexin V-/PI-), Early Apoptotic (Annexin V+/PI-), Late Apoptotic/Secondary Necrotic (Annexin V+/PI+), and Necrotic (Annexin V-/PI+) populations as a function of drug concentration.</p>\n')
+  cat('</div>\n')
+}
+```
+
+---
+
+# 3. Statistical Analysis
+
+## 3.1 Inter-Cell Line Comparison
+
+<div class="method-box">
+  <h4>Statistical Hypothesis</h4>
+  <ul>
+    <li><strong>Null Hypothesis (H0):</strong> There is no significant difference in the mean sensitivity (Log10 IC50) between the analyzed cell lines.</li>
+    <li><strong>Alternative Hypothesis (H1):</strong> At least one cell line exhibits a statistically significant difference in sensitivity (Log10 IC50).</li>
+  </ul>
+  <p><em>Note: Analysis is performed on Log10-transformed IC50 values (pIC50) to satisfy the assumption of normality and homogeneity of variance common in pharmacological potency data.</em></p>
+</div>
+
+```{r results='asis'}
+ic50_stats <- params$ic50_stats
 
 if (!is.null(ic50_stats)) {
-  cat("### Statistical comparison of IC50 values\n\n")
-  cat(ic50_stats, sep = "\n")
-  cat("\n")
-}
+  # Extract p-value for interpretation
+  # The stats string contains the summary table. We need to parse the p-value.
+  # summary(aov) usually looks like: Source Df Sum Sq Mean Sq F value Pr(>F)
+  # cell_line 2 0.123 0.061 15.4 0.002 ***
+  
+  p_val <- NA
+  # Simple regex to find the p-value in the summary output
+  p_match <- regexpr("cell_line\\s+\\d+\\s+[0-9.]+\\s+[0-9.]+\\s+[0-9.]+\\s+([0-9.e-]+)", ic50_stats)
+  if (p_match != -1) {
+     p_str <- regmatches(ic50_stats, p_match)
+     p_val_raw <- sub(".*\\s+([0-9.e-]+)$", "\\1", p_str)
+     p_val <- as.numeric(p_val_raw)
+  }
 
-```
+  cat('<h4>ANOVA Summary Table</h4>\n')
+  
+  # Professional ANOVA table rendering
+  # summary(aov) usually looks like: Source Df Sum Sq Mean Sq F value Pr(>F)
+  # We can parse the summary into a dataframe for kable
+  
+  # Try to extract the table part
+  stats_lines <- readLines(textConnection(ic50_stats))
+  table_lines <- stats_lines[grep("cell_line|Residuals", stats_lines)]
+  
+  if (length(table_lines) > 0) {
+     # Helper to split by multiple spaces
+     split_stats <- function(x) {
+        parts <- strsplit(trimws(x), "\\s+")[[1]]
+        # Handle cases with different lengths (Residuals has fewer)
+        if (length(parts) < 6) parts <- c(parts, rep(NA, 6 - length(parts)))
+        parts
+     }
+     
+     df_stats <- do.call(rbind, lapply(table_lines, split_stats))
+     colnames(df_stats) <- c("Source", "Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)")
+     
+     cat(as.character(as.data.frame(df_stats) %>%
+       render_table(caption = "Table 8a: Analysis of Variance (Log10 IC50)")))
+  } else {
+     cat('<div class="method-box"><pre><code>\n')
+     cat(ic50_stats)
+     cat('\n</code></pre></div>\n')
+  }
+  
+  if (!is.na(p_val)) {
+    cat('<h4>Statistical Interpretation</h4>\n')
+    if (p_val < 0.05) {
+      cat(paste0('<div class="alert alert-success" style="padding: 15px; border-left: 5px solid #28a745; background-color: #d4edda; color: #333;">',
+                 '<strong>Result: Statistically Significant (p = ', format.pval(p_val, digits = 3), ')</strong><br>',
+                 'The p-value is below the threshold of 0.05. We <strong>reject</strong> the null hypothesis. ',
+                 'There is strong evidence that at least one cell line differs significantly in its sensitivity to the treatment. ',
+                 'See the pairwise comparisons below to identify specific differences.</div>\n'))
+    } else {
+      cat(paste0('<div class="alert alert-warning" style="padding: 15px; border-left: 5px solid #ffc107; background-color: #fff3cd; color: #333;">',
+                 '<strong>Result: Not Significant (p = ', format.pval(p_val, digits = 3), ')</strong><br>',
+                 'The p-value is greater than 0.05. We <strong>fail to reject</strong> the null hypothesis. ',
+                 'There is no statistically significant evidence of a difference in drug sensitivity between the cell lines at the 95% confidence level.</div>\n'))
+    }
+  }
 
-## 6. Quality control
-
-```{r}
-
-qc_table <- params$qc_table
-
-if (!is.null(qc_table) && nrow(qc_table) > 0) {
-
-  # Add Status column like in the Shiny app
-  qc_table <- qc_table %>%
-    dplyr::mutate(
-      Status = dplyr::case_when(
-        cv_pct < 15 ~ "✓ Good",
-        cv_pct < 25 ~ "⚠ Acceptable",
-        TRUE        ~ "✗ High Variability"
-      )
-    ) %>%
-    dplyr::select(
-      `Cell Line`          = cell_line,
-      `Concentration (µM)` = concentration_uM,
-      `Mean Viability (%)` = mean_viable,
-      `CV (%)`             = cv_pct,
-      n,
-      Status
-    )
-
-  cat("Coefficient of variation (CV%) by condition\n\n")
-  cat("CV% < 15%: Good | 15-25%: Acceptable | >25%: High variability\n\n")
-
-  qc_table %>%
-    kable(
-      "html",
-      digits  = 2,
-      caption = "Coefficient of variation (CV%) by condition"
-    ) %>%
-    kable_styling(full_width = FALSE)
-
+  if (!is.null(params$posthoc_results)) {
+    cat('<h4>Pairwise Comparisons (Tukey HSD)</h4>\n')
+    cat('<p>Post-hoc analysis was performed to identify specific differences between cell lines (Family-wise error rate = 0.05).</p>\n')
+    
+    # Format Tukey table
+    tukey_display <- params$posthoc_results %>%
+      dplyr::select(Comparison, diff, `p adj`) %>%
+      mutate(
+        `Difference (Log)` = round(diff, 3),
+        `P-value` = format.pval(`p adj`, digits = 3, eps = 0.001),
+        Significance = case_when(
+          `p adj` < 0.001 ~ "***",
+          `p adj` < 0.01 ~ "**",
+          `p adj` < 0.05 ~ "*",
+          TRUE ~ "ns"
+        )
+      ) %>%
+      dplyr::select(Comparison, `Difference (Log)`, `P-value`, Significance)
+      
+    cat(as.character(as.data.frame(tukey_display) %>%
+      render_table(caption = "Table 8: Pairwise comparison of potency (Log IC50)")))
+      
+    # Add Interpretation for NA p-values
+    if (any(is.na(params$posthoc_results$`p adj`))) {
+       cat('<div class="alert alert-info" style="margin-top: 15px;">\n')
+       cat('<strong>Note on Statistical Significance:</strong> P-values could not be calculated for some comparisons. This typically occurs when there are insufficient replicates (residuals = 0) to estimate variance. Differences shown are point-estimates only.\n')
+       cat('</div>\n')
+    }
+  }
 } else {
-  cat("No QC data available.\n")
+  cat('<p><em>Statistical comparison requires at least 2 cell lines.</em></p>\n')
 }
-
 ```
 
-## 7. Plots
+---
+
+# 4. Quality Control
+
+## 4.1 Replicate Variability
+
+```{r results='asis'}
+qc_table_raw <- params$qc_table
+excluded_ids <- params$excluded_data
+
+if (!is.null(qc_table_raw) && nrow(qc_table_raw) > 0) {
+  
+  # Helper to generate ID match
+  # Reconstruct ID: CellLine_Conc_Rep
+  qc_prepared <- qc_table_raw %>%
+          mutate(
+            Row_ID = paste(cell_line, concentration_uM, replicate, sep = "_"),
+            Status = ifelse(Row_ID %in% excluded_ids, "⛔ Excluded", 
+                     case_when(
+                       cv_pct < 15 ~ "✓ Good",
+                       cv_pct < 25 ~ "⚠ Acceptable",
+                       TRUE ~ "✗ High Variability"
+                     ))
+          )
+      
+      # Select columns for display
+      qc_final <- qc_prepared %>%
+        dplyr::select(
+          `Cell Line` = cell_line,
+          `Concentration (µM)` = concentration_uM,
+          `Replicate` = replicate,
+          `Viability (%)` = pct_viable,
+          `Mean Viability (%)` = mean_viable,
+          `CV (%)` = cv_pct,
+          `Status` = Status,
+          Row_ID # Keep for styling then remove
+        ) %>%
+        mutate(across(c(`Viability (%)`, `Mean Viability (%)`, `CV (%)`), ~ round(.x, 2)))
+  
+  # Professional styling with exclusion feedback
+  qc_table_styled <- qc_final %>%
+    mutate(
+      across(everything(), ~ cell_spec(.x, 
+        color = ifelse(Row_ID %in% excluded_ids, "#721c24", "inherit"),
+        background = ifelse(Row_ID %in% excluded_ids, "#f8d7da", "inherit"),
+        strikeout = Row_ID %in% excluded_ids
+      ))
+    ) %>%
+    dplyr::select(-Row_ID)
+  
+  # Render table
+  cat(as.character(qc_table_styled %>%
+    kable("html", caption = "Table 7: Replicate-level quality control and variability assessment", escape = FALSE) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE, position = "center") %>%
+    row_spec(0, bold = TRUE, color = "white", background = "#2c3e50")))
+  
+  # Summary stats (based on groups)
+  # We need unique groups for this count
+  qc_groups <- qc_prepared %>%
+    dplyr::select(cell_line, concentration_uM, cv_pct) %>%
+    distinct()
+    
+  n_good <- sum(qc_groups$cv_pct < 15)
+  n_acceptable <- sum(qc_groups$cv_pct >= 15 & qc_groups$cv_pct < 25)
+  n_poor <- sum(qc_groups$cv_pct >= 25)
+  
+  if (n_poor > 0) {
+    cat('<div class="danger-box">\n')
+    cat(sprintf('<p><strong><span style="font-family: sans-serif;">&#9888;</span> Quality Alert:</strong> %d condition(s) show high variability (CV &gt; 25%%). Consider investigating these outliers or increasing replicate number.</p>\n', n_poor))
+    cat('</div>\n')
+  } else if (n_acceptable > 0) {
+    cat('<div class="alert-box">\n')
+    cat(sprintf('<p><strong>Note:</strong> %d condition(s) have acceptable variability (15%% &lt; CV &lt; 25%%). %d condition(s) show good reproducibility (CV &lt; 15%%).</p>\n', n_acceptable, n_good))
+    cat('</div>\n')
+  } else {
+    cat('<div class="success-box">\n')
+    cat(sprintf('<p><strong>&#10003; Excellent Quality:</strong> All %d conditions show good reproducibility (CV &lt; 15%%).</p>\n', n_good))
+    cat('</div>\n')
+  }
+  
+  cat('<p><strong>QC Criteria:</strong></p>\n')
+  cat('<ul>\n')
+  cat('<li>CV < 15%: Excellent reproducibility</li>\n')
+  cat('<li>15% ≤ CV < 25%: Acceptable variability</li>\n')
+  cat('<li>CV ≥ 25%: High variability (investigate potential outliers or technical issues)</li>\n')
+  cat('</ul>\n')
+  cat('<p><em>Note: Coefficient of Variation (CV) is calculated as: CV(%) = (Standard Deviation / Mean) × 100.</em></p>\n')
+}
+```
+
+## 4.2 Outlier Detection
+
+```{r results='asis'}
+outlier_flags <- params$outlier_flags
+
+cat('<div class="method-box">\n')
+cat('<p><strong>Method:</strong> Grubbs test (α = 0.05) was applied to each concentration group to detect statistical outliers in viability measurements.</p>\n')
+
+if (!is.null(outlier_flags) && nrow(outlier_flags) > 0) {
+  cat('<div class="danger-box">\n')
+  cat(sprintf('<p><strong><span style="font-family: sans-serif;">&#9888;</span> Outliers Detected:</strong> %d potential outlier(s) identified. Note: These are only excluded from final analysis if manually toggled in the interface.</p>\n', nrow(outlier_flags)))
+  cat('</div>\n')
+  
+  # Format table for display
+  outlier_display <- outlier_flags %>%
+    dplyr::select(
+      `Cell Line` = cell_line,
+      `Concentration (µM)` = concentration_uM,
+      `Replicate` = replicate,
+      `p-value` = p_value
+    ) %>%
+    mutate(`p-value` = format.pval(`p-value`, digits = 3, eps = 0.001))
+    
+  cat(as.character(as.data.frame(outlier_display) %>%
+    render_table(caption = "Table 9: Statistical outliers identified via Grubbs test")))
+} else {
+  cat('<div class="success-box">\n')
+  cat('<p><strong>✓ Status:</strong> No significant outliers detected in the dataset.</p>\n')
+  cat('</div>\n')
+}
+
+cat('</div>\n')
+```
+
+---
+
+# Appendix
+
+## A1. Raw Data Summary
 
 ```{r}
+# 1. Get the raw results
+results_raw <- params$results_raw
 
-if (!is.null(params$viability_plot))    print(params$viability_plot)
+# 2. Safety check: Ensure data exists
+if (!is.null(results_raw) && nrow(results_raw) > 0) {
+  
+  # 3. Create a mapping of Internal Names to Display Names
+  # This list contains ALL possible columns
+  mapping <- c(
+    "cell_line" = "Cell Line",
+    "treatment_full" = "Treatment",
+    "concentration_uM" = "Concentration (µM)",
+    "replicate" = "Replicate",
+    "name" = "File",
+    "filename" = "File",
+    "pct_viable" = "Viable (%)",
+    "pct_early_apoptotic" = "Early Apoptotic (%)",
+    "pct_late_apoptotic" = "Late Apoptotic (%)",
+    "pct_necrotic" = "Necrotic (%)"
+  )
+  
+  # 4. Only select columns that actually exist in results_raw
+  existing_cols <- intersect(names(mapping), colnames(results_raw))
+  
+  # 5. Subset and format the data safely
+  app_display <- results_raw[, existing_cols, drop = FALSE] %>%
+    mutate(across(starts_with("pct_"), ~ round(.x, 2))) %>%
+    mutate(across(starts_with("abs_conc_"), ~ round(.x, 0)))
+  
+  # 6. Rename only the columns we kept
+  colnames(app_display) <- mapping[existing_cols]
+  
+  # 7. Render the table
+  render_table(app_display, caption = "Appendix Table A1: Complete raw viability and apoptosis data")
+}
+```
 
-if (!is.null(params$death_plot))        print(params$death_plot)
+## A2. Computational & Statistical Methodology
 
-if (!is.null(params$ic50_ld50_plot))    print(params$ic50_ld50_plot)
+This appendix provides a comprehensive transparency report on the algorithms, mathematical models, and statistical tests employed by the software. It is structured to follow the data processing pipeline from raw file ingestion to final statistical inference.
 
-if (!is.null(params$quadrant_plot))     print(params$quadrant_plot)
+### A2.1 Step 1: Signal Processing & Compensation
+*   **FCS Parsing:** Raw Flow Cytometry Standard (.fcs) files are ingested using the `flowCore` R package.
+*   **Fluorescence Compensation:** To correct for spectral overlap (spillover) between fluorophores, the software applies linear algebra to the signal intensities. The compensated signal matrix ($D_{comp}$) is calculated as:
+    $$ D_{comp} = D_{raw} \times S^{-1} $$
+    Where:
+    *   $D_{raw}$ is the matrix of raw intensities (Rows = Events, Cols = Detectors).
+    *   $S^{-1}$ is the inverted **Spillover Matrix** (calculated from single-stained controls).
+*   **Data Transformation:** For visualization and gating, fluorescence data is transformed using the **Logicle** (biexponential) scale. Unlike a standard logarithmic scale, the Logicle transformation can handle negative values (which frequently occur after compensation) and provides a linear-like display near zero, ensuring accurate visualization of low-intensity populations.
 
+### A2.2 Step 2: Automated Gating Algorithms
+*   **Bead Identification (Step 0):** If absolute counting is enabled, the software first identifies the bead population using a high-fluorescence gate ($I_{BL1-A} > T_{bead}$). These events are counted separately ($N_{bead}$) and **subtracted** from the raw data before further cell gating.
+*   **Morphological Gating (Polygons):** When the user draws a gate on the FSC/SSC or Singlet plots, the vertices are stored as coordinates. To determine if a cell falls within this region, the software employs the **Ray-Casting Algorithm** (Point-in-Polygon test). A ray is cast from the query point; if it intersects the polygon edges an odd number of times, the point is inside.
+*   **Apoptosis Classification (Quadrants):**
+    1.  Events passing the Singlet gate are extracted.
+    2.  Annexin V and PI intensities are logicle-transformed.
+    3.  A **Boolean Logic** classification is applied using the user-defined thresholds ($T_{annexin}$ and $T_{PI}$):
+        *   **Viable ($Q4$):** $I_{Annexin} < T_{annexin} \land I_{PI} < T_{PI}$
+        *   **Early Apoptotic ($Q3$):** $I_{Annexin} \ge T_{annexin} \land I_{PI} < T_{PI}$
+        *   **Late Apoptotic/Secondary Necrotic ($Q2$):** $I_{Annexin} \ge T_{annexin} \land I_{PI} \ge T_{PI}$
+        *   **Necrotic ($Q1$):** $I_{Annexin} < T_{annexin} \land I_{PI} \ge T_{PI}$
+
+### A2.3 Step 3: Absolute Quantification Logic
+If counting beads were used, absolute cell concentration ($C_{cells}$) is calculated using the following volumetric correction:
+$$ C_{cells} = \left( \frac{N_{cells}}{N_{beads}} \right) \times \left( \frac{V_{beads}}{V_{sample}} \right) \times C_{beads} $$
+Where:
+*   $N_{cells}$: Number of gated cells (e.g., viable cells).
+*   $N_{beads}$: Number of beads detected in the bead gate.
+*   $V_{beads}$: Volume of beads added to the tube (µL).
+*   $V_{sample}$: Initial volume of the cell sample (µL).
+*   $C_{beads}$: Concentration of the bead stock (beads/µL).
+
+**Relative Absolute Survival:** To account for total cell loss (lysis), survival is normalized to the control (untreated) sample:
+$$ S_{abs} = \frac{C_{treated}}{C_{control}} \times 100 $$
+
+### A2.4 Step 4: Dose-Response Modeling (Curve Fitting)
+Curve fitting is performed using the `drc` (Dose-Response Curve) package in R using a non-linear least squares approach.
+
+*   **Primary Model (LL.4):** The Four-Parameter Log-Logistic model is the standard for sigmoidal dose-response data:
+    $$ f(x) = c + \frac{d-c}{1+\exp(b(\log(x)-\log(e)))} $$
+    *   **$x$:** Drug concentration.
+    *   **$e$:** The **IC50/LD50** (inflection point).
+    *   **$b$:** The **Hill Slope** (measure of cooperativity/steepness).
+    *   **$c$:** The **Lower Limit** (bottom plateau, theoretical minimum response).
+    *   **$d$:** The **Upper Limit** (top plateau, theoretical maximum response).
+
+*   **Robust Fitting Strategy:** If the LL.4 model fails to converge (e.g., due to noise or insufficient plateau definition), the software automatically attempts alternative models in the following order:
+    1.  **LL.3:** Three-parameter Log-Logistic (Upper limit fixed to 100).
+    2.  **Weibull (W1.4/W2.4):** Asymmetric sigmoidal models useful for skewed responses.
+
+### A2.5 Step 5: Statistical Inference
+*   **Normalization:** If enabled, raw viability percentages are normalized relative to the untreated control:
+    $$ V_{norm} = \frac{V_{sample}}{\bar{V}_{control}} \times 100 $$
+*   **Log-Transformation:** Pharmacological potency values (IC50) typically follow a log-normal distribution. Therefore, all statistical comparisons are performed on the Log10-transformed values ($pIC50 = \log_{10}(IC50)$) to satisfy the assumption of normality required by parametric tests.
+*   **One-Way ANOVA:** Analysis of Variance is conducted to test the null hypothesis ($H_0$) that the mean LogIC50 values are identical across all cell lines.
+*   **Tukey's HSD Post-Hoc Test:** If ANOVA indicates significance ($p < 0.05$), Tukey's Honest Significant Difference test is performed to identify exactly *which* pairs of cell lines differ significantly, controlling the Family-Wise Error Rate (FWER) at 0.05.
+*   **Outlier Detection (Grubbs Test):** To identify technical errors (e.g., pipetting mistakes), the Grubbs test is applied to replicates within each concentration group. The test statistic $G$ identifies if the value furthest from the mean is a significant outlier:
+    $$ G = \frac{\max|Y_i - \bar{Y}|}{s} $$
+    Outliers ($p < 0.05$) are flagged in the QC table but are **only excluded** if the user manually toggles them off in the interface.
+
+### A2.5 References and Citations
+
+```{r results='asis'}
+cat('<div class="method-box">\n')
+cat('<h3>Software and Packages</h3>\n')
+cat('<ul>\n')
+cat('<li><strong>R version:</strong> ', R.version.string, '</li>\n', sep = '')
+cat('<li><strong>Flow Cytometry Engine:</strong> <code>flowCore</code> (FCS parsing, compensation, and Logicle transformation)</li>\n')
+cat('<li><strong>Dose-Response Modeling:</strong> <code>drc</code> (Non-linear least squares fitting)</li>\n')
+cat('<li><strong>Visualization:</strong> <code>ggplot2</code>, <code>gridExtra</code>, <code>viridis</code></li>\n')
+cat('<li><strong>Statistical Analysis:</strong> <code>stats</code> (ANOVA/Tukey), <code>outliers</code> (Grubbs Test)</li>\n')
+cat('<li><strong>Report Generation:</strong> <code>knitr</code>, <code>kableExtra</code>, <code>rmarkdown</code></li>\n')
+cat('</ul>\n')
+
+cat('<h3>Recommended Citations</h3>\n')
+cat('<ul>\n')
+cat('<li><strong>Annexin V Assay:</strong> Vermes I, Haanen C, Steffens-Nakken H, Reutelingsperger C. A novel assay for apoptosis. Flow cytometric detection of phosphatidylserine expression on early apoptotic cells using fluorescein labelled Annexin V. <em>J Immunol Methods</em>. 1995;184(1):39-51.</li>\n')
+cat('<li><strong>Dose-Response Analysis:</strong> Ritz C, Baty F, Streibig JC, Gerhard D. Dose-Response Analysis Using R. <em>PLoS One</em>. 2015;10(12):e0146021.</li>\n')
+cat('<li><strong>Logicle Transformation:</strong> Parks DR, Roederer M, Moore WA. A new "Logicle" display method avoids misleading appearance of negatively transformed data from flow cytometry. <em>Cytometry A</em>. 2006;69(6):541-51.</li>\n')
+cat('<li><strong>Software DOI:</strong> Mahmood MOHAMMED ALI. (2025). Mahmood-M-Ali/FlowIC50: v3.0 (v3.0). Zenodo. <a href="https://doi.org/10.5281/zenodo.17872796">https://doi.org/10.5281/zenodo.17872796</a></li>\n')
+cat('</ul>\n')
+cat('</div>\n')
+```
+
+---
+
+```{r footer, echo=FALSE}
+library(htmltools)
+
+div(
+  class = "footer",
+  tags$link(rel = "stylesheet", href = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"),
+  tags$style("
+    .footer a { color: white !important; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+    .footer .social-links i { font-size: 1.2em; vertical-align: middle; }
+  "),
+  
+  p(strong("Developed by Mahmood Mohammed Ali")),
+  p("Université Grenoble Alpes | Institute for Advanced Biosciences | Epigenetics of Regeneration and Cancer Group"),
+  p("mahmood.mohammed-ali@univ-grenoble-alpes.fr"),
+
+  div(
+    class = "social-links",
+    a(href = "mailto:mahmood.mohammed-ali@univ-grenoble-alpes.fr", target = "_blank",
+      tags$i(class = "fas fa-envelope"), " Email"),
+    HTML("&nbsp;&nbsp;"),
+    a(href = "https://github.com/Mahmood-M-Ali", target = "_blank",
+      tags$i(class = "fab fa-github"), " GitHub"),
+    HTML("&nbsp;&nbsp;"),
+    a(href = "https://www.linkedin.com/in/mahmood-mohammed-ali-20334b205/", target = "_blank",
+      tags$i(class = "fab fa-linkedin"), " LinkedIn")
+  ),
+
+  div(
+    style = "margin-top: 20px;",
+    a(href = "https://creativecommons.org/licenses/by-nc/4.0/", target = "_blank",
+      img(src = "https://i.creativecommons.org/l/by-nc/4.0/88x31.png", alt = "CC BY-NC 4.0 License", style = "border: 0;"))
+  ),
+
+  div(
+    style = "margin-top: 10px;",
+    a(href = "https://doi.org/10.5281/zenodo.17872796", target = "_blank",
+      img(src = "https://zenodo.org/badge/DOI/10.5281/zenodo.17872796.svg", alt = "DOI: 10.5281/zenodo.17872796", style = "border: 0;"))
+  )
+)
+```
 ```
