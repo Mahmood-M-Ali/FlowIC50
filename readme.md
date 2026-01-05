@@ -1,121 +1,101 @@
-# Flow Cytometry IC50 Analyzer
+# FlowPath Dynamics: Precision Flow Cytometry Analysis
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17872796.svg)](https://doi.org/10.5281/zenodo.17872796)
 [![R](https://img.shields.io/badge/R-%3E%3D4.0-blue)](https://www.r-project.org/)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](http://creativecommons.org/licenses/by-nc/4.0/)
 [![Shiny](https://img.shields.io/badge/Shiny-App-blue)](https://shiny.rstudio.com/)
-[![GitHub Repo](https://img.shields.io/badge/GitHub-FlowIC50-black?logo=github)](https://github.com/Mahmood-M-Ali/FlowIC50)
-[![Hugging Face](https://img.shields.io/badge/Spaces-FACS--Analysis-yellow?logo=huggingface)](https://huggingface.co/spaces/mahmood-iab/FACS-Analysis)
+[![Hugging Face](https://img.shields.io/badge/Spaces-FlowPath--Dynamics-yellow?logo=huggingface)](https://huggingface.co/spaces/mahmood-iab/FACS-Analysis)
 
-Automated **Shiny application** for flow cytometry-based IC50 determination using Annexin V/PI apoptosis assays with fluorescence compensation.
-
----
-
-## Quick Start
-
-**No installation required.** Access the web application directly at:  
- [https://huggingface.co/spaces/mahmood-iab/FACS-Analysis](https://huggingface.co/spaces/mahmood-iab/FACS-Analysis)
-
-Upload FCS files and analyze immediately in your browser.
+**FlowPath Dynamics** is a professional, publication-ready R Shiny application designed for automated flow cytometry dose-response profiling. It supports both specialized **Annexin V/PI Apoptosis Assays** and **Multi-Channel Phenotypic Analysis**, providing high-throughput quantification from raw FCS files to statistical inference.
 
 ---
 
-## Features
+## 🚀 Quick Start
 
-- Automated batch processing of FCS files  
-- Fluorescence spillover compensation from single-stained controls  
-- Interactive hierarchical gating (FSC/SSC, singlets, viability)  
-- Robust IC50 curve fitting with multiple algorithms  
-- Publication-ready plots (300 DPI) and CSV exports  
-- Complete results package download (ZIP)  
+**No installation required.** Access the full suite directly at:  
+[https://huggingface.co/spaces/mahmood-iab/FACS-Analysis](https://huggingface.co/spaces/mahmood-iab/FACS-Analysis)
 
 ---
 
-## File Naming Convention
+## ✨ Key Enhancements (v3.0)
 
-File names must follow this format:  
+- **Dual Analysis Engines:** Switch between specialized Apoptosis profiling and a new, combinatorial Multi-Channel Generic mode (up to $2^N$ populations).
+- **Absolute Quantification:** Integrated volumetric cell counting using counting beads (e.g., Precision Count Beads™).
+- **Dynamic Analysis Engine:** Instant results recalculation (curves, stats, plots) without re-processing raw files.
+- **Interactive Data Exclusion:** Real-time replicate exclusion with visual feedback and outlier detection (Grubbs Test).
+- **Advanced Compensation:** Support for per-cell-line manual matrix adjustment with real-time preview.
+- **Scientific Rigor:** Statistical inference using One-Way ANOVA on Log10-potency values with Tukey HSD post-hoc testing.
+- **Publication Graphics:** Automatic generation of Dumbbell plots (Therapeutic Window), violin plots (MFI), and stacked bar charts.
+
+---
+
+## 📁 File Naming Convention
+
+Files must follow this standardized format for automatic metadata extraction:  
 `CellLine_Treatment_ConcentrationuM_Replicate.fcs`
 
 **Examples:**
-- `Ly18_YF2_0uM_Rep1.fcs`
-- `HT_DMSO_50uM_Rep2.fcs`
-- `SUDHL4_Compound_10.5uM_Rep1.fcs`
+- `Ly1_CompoundX_10uM_Rep1.fcs`
+- `NUDUL1_DMSO_0uM_Rep3.fcs` (Control)
 
 ---
 
-## Workflow
+## 🛠 Workflow
 
-1. Upload FCS files (minimum 4 concentrations per cell line)  
-2. Optional: Calculate compensation matrix from single-stained controls  
-3. Select control concentration (typically 0 µM)  
-4. Gate control samples interactively (FSC/SSC → Singlets → Annexin V/PI)  
-5. Run automated analysis  
-6. Download results package (IC50 values, plots, raw data)  
-
----
-
-## Compensation Controls
-
-For fluorescence compensation, upload three controls:
-
-- **Unstained**: No fluorescent staining  
-- **Annexin V-FITC only**: Single positive control  
-- **PI only**: Single positive control
-- In the current version, the application is optimized for analyzing cells stained with Propidium Iodide (PI) and Annexin V. However, the workflow is flexible — you can substitute any two stains, and the analysis will still function correctly despite the namings of stains. Future updates will further generalize the app to support a wider range of staining combinations.
+1. **Upload:** Add batch FCS files and optional single-stained controls.
+2. **Setup:** Select your analysis mode (Apoptosis vs. Generic) and enable Absolute Counting if beads were used.
+3. **Compensate:** Calculate or manually fine-tune the spillover matrix.
+4. **Gate:** Interactive hierarchical gating (Beads → FSC/SSC → Singlets → Marker Thresholds).
+5. **Review:** Verify gates across all cell lines in the visual dashboard.
+6. **Analyze:** Run the engine to fit curves and perform pairwise statistical comparisons.
+7. **Export:** Download a comprehensive ZIP package including a 20+ page technical HTML report.
 
 ---
 
-## IC50 Curve Fitting
+## 📊 Analytical Methodology
 
-Multiple algorithms attempted sequentially for robust fitting:
+### Curve Fitting
+Powered by the `drc` package, the app iteratively attempts:
+1. **LL.4:** Four-parameter log-logistic (Standard).
+2. **LL.3:** Three-parameter (Fixed upper limit).
+3. **Weibull (W1.4/W2.4):** Robust alternatives for non-standard responses.
 
-1. Four-parameter log-logistic (LL.4) with auto starting values  
-2. LL.4 with manual starting values  
-3. Three-parameter log-logistic (LL.3)  
-4. Four-parameter Weibull (W1.4)  
-5. Two-parameter Weibull (W1.2)  
-
-IC50 values extracted with 95% confidence intervals via delta method.
-
----
-
-## Output Files
-
-ZIP package includes:
-
-- **IC50_results.csv**: IC50 values with confidence intervals and fitting method  
-- **raw_viability_data.csv**: Per-sample viability measurements  
-- **dose_response_curves.png**: High-resolution dose-response plot (300 DPI)  
-- **ic50_comparison.png**: Bar chart comparing IC50 values (300 DPI)  
-- **file_metadata.csv**: Parsed file information  
-- **analysis_settings.csv**: Analysis parameters  
-- **compensation_matrix.csv**: Compensation coefficients (if calculated)  
+### Potency Metrics
+- **IC50/LD50/EC50:** Half-maximal effective concentrations with 95% CI.
+- **Therapeutic Window:** Distance-based comparison of potency vs. toxicity.
+- **Absolute Survival:** Normalization to bead-based volumetric concentration to capture total cell loss.
 
 ---
 
-## Gating Strategy
+## 📦 Output Package (ZIP)
 
-Standard hierarchical gating approach:  
-**All Events → FSC/SSC (cells) → FSC-A/FSC-H (singlets) → Annexin V/PI (viability)**
-
-Gates defined on control samples and applied uniformly to all conditions
+- **Technical Report:** Comprehensive HTML documentation of methodology, gating, and results.
+- **Data Tables:** CSV files for Raw Quadrant Data, IC50/EC50 Results, QC Metrics (CV%), and Tukey HSD Stats.
+- **High-Res Figures:** 300 DPI PNG/SVG exports of all generated plots.
+- **Traceability:** Exported compensation matrices and gate coordinates.
 
 ---
 
-## Local Installation
-To run the codce locally on your own R you can take the code directly from Github and it will funciton correclty as the website.
+## 💻 Local Installation
 
-### Prerequisites
-
-R ≥ 4.0 and required packages:
+Run locally in RStudio using the following dependencies:
 
 ```r
 # Bioconductor
 BiocManager::install("flowCore")
 
-# CRAN packages
-install.packages(c("shiny", "bslib", "ggplot2", "dplyr", "tidyr",
-                   "readr", "stringr", "drc", "scales", "sp", "zip"))
+# CRAN
+install.packages(c("shiny", "bslib", "ggplot2", "dplyr", "tidyr", "readr", 
+                   "stringr", "drc", "scales", "sp", "zip", "svglite", 
+                   "outliers", "DescTools", "gridExtra", "rmarkdown", 
+                   "kableExtra", "DT", "ggrepel", "knitr", "htmltools"))
+```
 
+---
 
+## 🎓 Developed By
 
+**Mahmood Mohammed Ali**  
+Université Grenoble Alpes | Institute for Advanced Biosciences (IAB)  
+Epigenetics of Regeneration and Cancer Group  
+[mahmood.mohammed-ali@univ-grenoble-alpes.fr](mailto:mahmood.mohammed-ali@univ-grenoble-alpes.fr)
