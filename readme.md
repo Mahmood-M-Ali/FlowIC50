@@ -17,15 +17,16 @@
 
 ---
 
-## Key Enhancements (v3.0)
+## Key Enhancements (v3.1)
 
 - **Dual Analysis Engines:** Switch between specialized Apoptosis profiling and a new, combinatorial Multi-Channel Generic mode (up to $2^N$ populations).
 - **Absolute Quantification:** Integrated volumetric cell counting using counting beads (e.g., Precision Count Beads™).
+- **Control Viability Guard:** Automated alerts for "failed experiments" (Control Viability < 70%) to prevent misleading normalization.
+- **Improved Compensation Engine:** High-performance spillover calculation using top-percentile peak detection and ArcSinh transformation for expanded "cloud" visualization.
 - **Dynamic Analysis Engine:** Instant results recalculation (curves, stats, plots) without re-processing raw files.
 - **Interactive Data Exclusion:** Real-time replicate exclusion with visual feedback and outlier detection (Grubbs Test).
-- **Advanced Compensation:** Support for per-cell-line manual matrix adjustment with real-time preview.
-- **Scientific Rigor:** Statistical inference using One-Way ANOVA on Log10-potency values with Tukey HSD post-hoc testing.
-- **Publication Graphics:** Automatic generation of Dumbbell plots (Therapeutic Window), violin plots (MFI), and stacked bar charts.
+- **Advanced Statistics:** Statistical inference using One-Way ANOVA on Log10-potency values with Tukey HSD post-hoc testing and automated hypothesis interpretation.
+- **Publication Graphics:** Automatic generation of Therapeutic Window plots, violin plots (MFI), and high-resolution reports.
 
 ---
 
@@ -95,8 +96,10 @@ install.packages(c("shiny", "bslib", "ggplot2", "dplyr", "tidyr", "readr",
 
 ## Developed By
 
-**Mahmood Mohammed Ali**  
-Université Grenoble Alpes | Institute for Advanced Biosciences (IAB)  
-Epigenetics of Regeneration and Cancer Group  
+**Mahmood Mohammed Ali** | Version 3.1
+Université Grenoble Alpes | Institute for Advanced Biosciences (IAB)
+Epigenetics of Regeneration and Cancer Group
 [mahmood.mohammed-ali@univ-grenoble-alpes.fr](mailto:mahmood.mohammed-ali@univ-grenoble-alpes.fr)
+
+**Software DOI:** Mahmood MOHAMMED ALI. (2025). Mahmood-M-Ali/FlowIC50: v3.1 (v3.1). Zenodo. [https://doi.org/10.5281/zenodo.17872796](https://doi.org/10.5281/zenodo.17872796)
 

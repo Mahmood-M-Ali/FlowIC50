@@ -103,8 +103,8 @@ theme_publication <- function() {
 pseudo_log_trans_for_breaks <- function() {
   scales::trans_new(
     "pseudo_log_for_breaks",
-    function(x) log10(x + 0.1), # Offset by 0.1 as used in the plot
-    function(x) 10^x - 0.1,
+    function(x) log10(x + 0.001), # Offset by 0.1 as used in the plot
+    function(x) 10^x - 0.001,
     domain = c(0, Inf)
   )
 }
@@ -113,7 +113,7 @@ pseudo_log_trans_for_breaks <- function() {
 custom_log_labels <- function(breaks) {
   lapply(breaks, function(x) {
     if (is.na(x) || !is.finite(x)) return("")
-    if (x == 0) return("0")
+    if (x == 0) return("0   ")
     
     # Standard pretty range (0.01 to 1000)
     if (abs(x) >= 0.01 && abs(x) < 1000) {
@@ -694,6 +694,7 @@ ui <- fluidPage(
             # Apoptosis-specific results
             conditionalPanel(
               condition = "input.is_apoptosis_assay == true",
+              uiOutput("control_quality_alert_ui"),
               h4("IC50/LD50 Results"),
               tableOutput("ic50_table"),
               p(style = "font-size: 0.85em; color: #555; font-style: italic; margin-top: -10px;",
@@ -1033,6 +1034,7 @@ server <- function(input, output, session) {
     generic_gate_defs = list(),
     generic_gate_counter = 0,
     generic_observers = list(),
+    generic_histogram_plots = list(), # NEW: Store individual histograms per cell line
 
 
     # NEW: Comprehensive results from multi-channel generic analysis
@@ -1272,8 +1274,38 @@ server <- function(input, output, session) {
           rownames(spill_matrix) <- comp_channels_for_spill
           colnames(spill_matrix) <- comp_channels_for_spill
 
-          # Get unstained stats
-          uns_exprs <- exprs(unstained_ff)
+          # --- HELPER: Clean Debris & Saturation ---
+          clean_ff <- function(ff) {
+            exprs_data <- exprs(ff)
+            
+            # 1. Filter Debris: FSC-A
+            # Increased to 20% to be very aggressive against noise/dead cells in controls
+            fsc_limit <- quantile(exprs_data[,"FSC-A"], 0.20, na.rm=TRUE)
+            mask <- exprs_data[,"FSC-A"] > fsc_limit
+            
+            # 2. Filter Saturation: Remove events at max dynamic range for fluorescent channels
+            # We look at the $PnR value for each channel in the parameters.
+            p_meta <- parameters(ff)@data
+            for (i in seq_len(nrow(p_meta))) {
+               ch_name <- p_meta$name[i]
+               # Skip FSC/SSC and Time
+               if (grepl("FSC|SSC|Time", ch_name, ignore.case = TRUE)) next
+               
+               # Get max range from metadata ($PnR)
+               max_val <- as.numeric(description(ff)[[paste0("$P", i, "R")]])
+               if (is.na(max_val)) max_val <- 1048576 # Default for many 20-bit systems
+               
+               # Threshold for saturation (events exactly at max or within 0.1% of it)
+               # Most cytometers hard-cap at the max value.
+               mask <- mask & (exprs_data[, ch_name] < (max_val * 0.999))
+            }
+            
+            ff[mask, ]
+          }
+
+          # Get unstained stats (CLEANED)
+          unstained_ff_clean <- clean_ff(unstained_ff)
+          uns_exprs <- exprs(unstained_ff_clean)
           uns_medians <- apply(uns_exprs[, comp_channels_for_spill, drop = FALSE], 2, median, na.rm = TRUE)
 
           # Loop over stained controls
@@ -1281,18 +1313,99 @@ server <- function(input, output, session) {
             if (!ch %in% names(ff_controls)) next
 
             ff <- ff_controls[[ch]]
-            dat <- exprs(ff)
+            ff_clean <- clean_ff(ff) # Use CLEANED data
+            dat <- exprs(ff_clean)
 
-            # Use median of the entire file to match old version logic
-            # (Old version did not gate for positive population)
-            pos_medians <- apply(dat[, comp_channels_for_spill, drop = FALSE], 2, median, na.rm = TRUE)
-            signal <- pos_medians - uns_medians
+            # --- SMART POSITIVE DETECTION (ROBUST) ---
+            # 1. Define Negative Limit using Robust Stats (Median + 3*MAD)
+            # This avoids outliers/debris inflating the negative baseline.
+            uns_values <- uns_exprs[, ch]
+            uns_med <- median(uns_values, na.rm = TRUE)
+            uns_mad <- mad(uns_values, constant = 1.4826, na.rm = TRUE) # constant makes it consistent with SD
+            neg_limit <- uns_med + 3 * uns_mad
+            
+            # Safety: If MAD is 0 (unlikely but possible with digitized data), fallback to quantile
+            if (uns_mad == 0) neg_limit <- quantile(uns_values, 0.98, na.rm = TRUE)
 
-            # Check if the control actually has signal in its primary channel
-            if (is.na(signal[ch]) || signal[ch] <= 1) {
-              showNotification(paste("Warning: Control for", ch, "is not brighter than unstained. Using identity (no compensation) for this channel."), type = "warning", duration = 15)
+            # 2. Identify Positive Events
+            stained_values <- dat[, ch]
+            is_positive <- stained_values > neg_limit
+            
+            # 3. Check for sufficient events
+            num_pos <- sum(is_positive, na.rm = TRUE)
+            total_events <- length(stained_values)
+            pct_pos <- (num_pos / total_events) * 100
+            
+            print(sprintf("Compensation Debug [%s]: Neg Limit (Robust)=%.2f, %% Pos=%.2f%%", ch, neg_limit, pct_pos))
+            
+            if (num_pos < 100 || pct_pos < 1.0) {
+                 # Fallback for weak controls: use top 5%
+                 print(sprintf("  -> Fallback triggered for %s (Top 5%%)", ch))
+                 top_cutoff <- quantile(stained_values, 0.95, na.rm = TRUE)
+                 is_positive <- stained_values >= top_cutoff
             } else {
-              spill_matrix[, ch] <- signal / signal[ch]
+                 # --- REFINED POSITIVE POPULATION (Center-Mass) ---
+                 # Target the linear "Sweet Spot" (50th-80th percentile).
+                 # This ignores the dim smear AND the saturated/non-linear tip.
+                 pos_vals <- stained_values[is_positive]
+                 p50 <- quantile(pos_vals, 0.50, na.rm = TRUE)
+                 p80 <- quantile(pos_vals, 0.80, na.rm = TRUE)
+                 
+                 print(sprintf("  -> Refined Range [%s]: P50=%.2f, P80=%.2f (Avoiding Tip)", ch, p50, p80))
+                 
+                 is_positive <- is_positive & (stained_values >= p50) & (stained_values <= p80)
+            }
+
+            # 4. Calculate Medians (The FlowJo/FCS Express Standard)
+            # We use the Median Ratio on the refined populations.
+            
+            # Positive Medians (on refined high-intensity population)
+            pos_medians <- apply(dat[is_positive, comp_channels_for_spill, drop = FALSE], 2, median, na.rm = TRUE)
+            
+            # Negative Medians (on truly negative population from same tube)
+            # Use events below the neg_limit to account for tube autofluorescence
+            is_negative <- stained_values <= neg_limit
+            # Ensure we have enough negative events, else fallback to unstained
+            if (sum(is_negative, na.rm=TRUE) > 100) {
+               neg_medians <- apply(dat[is_negative, comp_channels_for_spill, drop = FALSE], 2, median, na.rm = TRUE)
+            } else {
+               neg_medians <- uns_medians 
+            }
+            
+            print(sprintf("  -> Medians [%s]: Pos=%.2f, Neg=%.2f", ch, pos_medians[ch], neg_medians[ch]))
+            
+            # Primary Signal (MFI_Pos - MFI_Neg in the primary channel)
+            primary_signal <- pos_medians[ch] - neg_medians[ch]
+            
+            # Loop through all channels to calculate spillover
+            for (detect_ch in comp_channels_for_spill) {
+               if (detect_ch == ch) {
+                   spill_matrix[detect_ch, ch] <- 1.0
+               } else {
+                   # Spillover Signal
+                   spill_signal <- pos_medians[detect_ch] - neg_medians[detect_ch]
+                   
+                   # Slope = Spillover / Primary
+                   if (primary_signal > 1) {
+                      slope <- spill_signal / primary_signal
+                   } else {
+                      slope <- 0
+                   }
+                   
+                   print(sprintf("     -> Spillover to %s: Signal=%.2f, Slope=%.4f", detect_ch, spill_signal, slope))
+                   
+                   # Physics check
+                   if (slope < 0) slope <- 0
+                   
+                   # --- SANITY CAP ---
+                   # Cap spillover at 80% to prevent over-compensation from dead cell contamination
+                   if (slope > 0.8) {
+                      slope <- 0.8
+                      showNotification(paste0("Warning: High spillover detected (", round(slope*100, 1), "%) from ", ch, " into ", detect_ch, ". Capped at 80% to prevent artifacts."), type = "warning", duration = 15)
+                   }
+                   
+                   spill_matrix[detect_ch, ch] <- slope
+               }
             }
           }
 
@@ -1336,56 +1449,75 @@ server <- function(input, output, session) {
               channels = c(vis_channel1, vis_channel2) # Store channels used for visualization
             )
 
-            # === GENERATE COMPENSATION PLOT OBJECT ===
+            # === GENERATE COMPENSATION PLOT OBJECT (ArcSinh Scaled) ===
 
-            # 1. Prepare Data & Calculate Dynamic Limits
-            # Unstained
-            uns_indices <- sample(1:nrow(exprs(unstained_ff)), min(5000, nrow(exprs(unstained_ff))))
-            uns_data_vis <- exprs(unstained_ff)[uns_indices, c(vis_channel1, vis_channel2)]
-            # Before & After
-            before_data_vis <- as.matrix(rv$comp_before_after$before)
-            after_data_vis <- as.matrix(rv$comp_before_after$after)
-
-            # Calculate Smart Limits (0.1% to 99.9% quantile to ignore extreme outliers)
-            # This ensures the axis is "dynamic to the data"
-            all_ch1 <- c(before_data_vis[, 1], after_data_vis[, 1], uns_data_vis[, 1])
-            all_ch2 <- c(before_data_vis[, 2], after_data_vis[, 2], uns_data_vis[, 2])
-
-            safe_range <- function(x) {
-              q <- quantile(x, c(0.001, 0.999), na.rm = TRUE)
-              diff <- q[2] - q[1]
-              if (diff == 0) diff <- 1
-              c(q[1] - 0.05 * diff, q[2] + 0.05 * diff)
+            # 1. Use ArcSinh Transformation (Standard for CyTOF/FACS visualization)
+            # This is robust, handles negatives linearly, and creates good "clouds"
+            # Cofactor 150 is standard for flow cytometry (Logicle approx)
+            asinh_cofactor <- 150
+            asinh_trans <- function(x) asinh(x / asinh_cofactor)
+            
+            # Helper to apply transform
+            apply_trans <- function(data) {
+               asinh_trans(as.matrix(data))
             }
 
-            xlims_scatter <- safe_range(all_ch1)
-            ylims_scatter <- safe_range(all_ch2)
-            # For histograms, we want a common axis that covers both channels to show relative intensity
-            hist_lims <- range(c(xlims_scatter, ylims_scatter))
+            # 2. Transform all datasets
+            # Unstained
+            uns_indices <- sample(1:nrow(exprs(unstained_ff)), min(5000, nrow(exprs(unstained_ff))))
+            uns_data_raw <- exprs(unstained_ff)[uns_indices, c(vis_channel1, vis_channel2)]
+            uns_data_vis <- apply_trans(uns_data_raw)
+            
+            # Before (Uncompensated)
+            before_data_vis_trans <- apply_trans(before_data_vis)
+            
+            # After (Compensated)
+            after_data_vis_trans <- apply_trans(after_data_vis)
 
-            # 2. Scatter Plots (Top Row)
-            df_b <- as.data.frame(before_data_vis)
+            # 3. Calculate Smart Axis Limits & Breaks
+            # Include negative breaks to visualize over-compensated "corner" data
+            raw_breaks <- c(-10000, -1000, -100, 0, 100, 1000, 10000, 100000, 1000000)
+            trans_breaks <- asinh_trans(raw_breaks)
+            
+            # Filter breaks that are within the data range (with some padding)
+            all_vals <- c(before_data_vis_trans, after_data_vis_trans)
+            data_range <- range(all_vals, na.rm=TRUE)
+            valid_indices <- trans_breaks >= (data_range[1] - 1) & trans_breaks <= (data_range[2] + 1)
+            
+            # Ensure we always include at least 0 and some positive/negative markers if they exist
+            if (!any(raw_breaks[valid_indices] == 0)) {
+               # Add 0 if it's within range but was filtered
+               if (0 >= (data_range[1]-1) && 0 <= (data_range[2]+1)) {
+                  valid_indices[raw_breaks == 0] <- TRUE
+               }
+            }
+
+            final_breaks <- trans_breaks[valid_indices]
+            final_labels <- custom_log_labels(raw_breaks[valid_indices])
+
+            # 4. Scatter Plots (Top Row)
+            df_b <- as.data.frame(before_data_vis_trans)
             colnames(df_b) <- c("x", "y")
-            df_a <- as.data.frame(after_data_vis)
+            df_a <- as.data.frame(after_data_vis_trans)
             colnames(df_a) <- c("x", "y")
 
             p_scat_b <- ggplot(df_b, aes(x, y)) +
               geom_point(alpha = 0.2, size = 0.5, color = "#D55E00") +
-              scale_x_continuous(labels = custom_log_labels) +
-              scale_y_continuous(labels = custom_log_labels) +
-              labs(title = "Before Compensation", subtitle = "Scatter", x = vis_channel1, y = vis_channel2) +
+              scale_x_continuous(breaks = final_breaks, labels = final_labels) +
+              scale_y_continuous(breaks = final_breaks, labels = final_labels) +
+              labs(title = "Before Compensation", subtitle = "Scatter (ArcSinh Scale)", x = vis_channel1, y = vis_channel2) +
               theme_publication() +
               theme(axis.text.x = element_text(angle = 0, vjust = 0.5, hjust = 0.5))
 
             p_scat_a <- ggplot(df_a, aes(x, y)) +
               geom_point(alpha = 0.2, size = 0.5, color = "#009E73") +
-              scale_x_continuous(labels = custom_log_labels) +
-              scale_y_continuous(labels = custom_log_labels) +
-              labs(title = "After Compensation", subtitle = "Scatter", x = vis_channel1, y = vis_channel2) +
+              scale_x_continuous(breaks = final_breaks, labels = final_labels) +
+              scale_y_continuous(breaks = final_breaks, labels = final_labels) +
+              labs(title = "After Compensation", subtitle = "Scatter (ArcSinh Scale)", x = vis_channel1, y = vis_channel2) +
               theme_publication() +
               theme(axis.text.x = element_text(angle = 0, vjust = 0.5, hjust = 0.5))
 
-            # 3. Histograms (Bottom Row)
+            # 5. Histograms (Bottom Row)
             # Helper to build histogram data
             label_unstained <- "Unstained"
             label_primary <- paste0(vis_channel1, " (Primary)")
@@ -1399,31 +1531,17 @@ server <- function(input, output, session) {
               )
             }
 
-            df_hist_b <- make_hist_df(uns_data_vis, before_data_vis, "Before")
+            df_hist_b <- make_hist_df(uns_data_vis, before_data_vis_trans, "Before")
             df_hist_b$Type <- factor(df_hist_b$Type, levels = c(label_unstained, label_primary, label_spillover))
 
-            df_hist_a <- make_hist_df(uns_data_vis, after_data_vis, "After")
+            df_hist_a <- make_hist_df(uns_data_vis, after_data_vis_trans, "After")
             df_hist_a$Type <- factor(df_hist_a$Type, levels = c(label_unstained, label_primary, label_spillover))
-
-            # Helper for log breaks (powers of 10) for histogram
-            get_log_breaks <- function(lims) {
-              if (any(is.na(lims))) {
-                return(numeric(0))
-              }
-              min_pow <- ceiling(log10(max(1, lims[1])))
-              max_pow <- floor(log10(lims[2]))
-              if (max_pow < min_pow) {
-                return(numeric(0))
-              }
-              10^(seq(min_pow, max_pow))
-            }
-            custom_breaks <- get_log_breaks(hist_lims)
 
             # Common theme for histograms
             hist_theme <- list(
-              scale_x_continuous(trans = scales::pseudo_log_trans(sigma = 1, base = 10), limits = hist_lims, breaks = custom_breaks, labels = custom_log_labels),
+              scale_x_continuous(breaks = final_breaks, labels = final_labels),
               scale_fill_manual(values = c("#999999", "#0072B2", "#D55E00")), # Grey, Blue, Red
-              labs(x = "Fluorescence Intensity", y = "Density"),
+              labs(x = "ArcSinh Intensity", y = "Density"),
               theme_publication(),
               theme(legend.position = "bottom", legend.title = element_blank(), legend.text = element_text(size = 8),
                     axis.text.x = element_text(angle = 0, vjust = 0.5, hjust = 0.5))
@@ -1636,13 +1754,11 @@ server <- function(input, output, session) {
     # Compensate
     fs_comp <- tryCatch(compensate(fs, comp_mat_use), error = function(e) fs)
     
-    # Transform
-    trans <- logicleTransform()
+    # Transform using Manual Logicle (w=1.0) for consistency with Gating Plot
+    trans <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
     data_raw <- exprs(fs_comp)
     
     # Pick 2 channels to plot
-    # Ideally, pick channels with high spillover in the matrix, or just the first two
-    # Let's use the first two channels of the matrix for simplicity
     ch_cols <- colnames(comp_mat_use)
     if (length(ch_cols) < 2) return(NULL)
     
@@ -1823,10 +1939,14 @@ server <- function(input, output, session) {
         # Scientific standard: primarily Area (A) is used for gating.
         fluor_chans <- all_chans[!grepl("FSC|SSC|Time", all_chans, ignore.case = TRUE)]
         
+        # Include SSC-A as an option for bead gating
+        ssc_chan <- all_chans[grepl("SSC-A", all_chans, ignore.case = TRUE)]
+        final_bead_choices <- unique(c(ssc_chan, fluor_chans))
+
         # Provide clean labels for the dropdown
         updateSelectInput(session, "bead_gate_channel", 
-                         choices = fluor_chans, 
-                         selected = if("BL1-A" %in% fluor_chans) "BL1-A" else fluor_chans[1])
+                         choices = final_bead_choices, 
+                         selected = if("BL1-A" %in% final_bead_choices) "BL1-A" else final_bead_choices[1])
       }, error = function(e) {
           message("Bead channel extraction error: ", e$message)
       })
@@ -2171,7 +2291,7 @@ server <- function(input, output, session) {
         gate <- rv$temp_bead_gates[[current_line]]
         bead_chan <- input$bead_gate_channel
         if (gate$type == "polygon") {
-          trans_temp <- logicleTransform()
+          trans_temp <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
           in_bead_gate <- point.in.polygon(
             data_raw[, "FSC-A"],
             trans_temp(data_raw[, bead_chan]),
@@ -2185,8 +2305,14 @@ server <- function(input, output, session) {
       fl_trans <- NULL
       if (!is.null(input$bead_gate_channel)) {
           bead_chan <- input$bead_gate_channel
-          trans_obj <- logicleTransform()
-          fl_trans <- trans_obj(data_raw[, bead_chan])
+          if (grepl("SSC", bead_chan, ignore.case = TRUE)) {
+             # Use linear scaling for SSC
+             fl_trans <- data_raw[, bead_chan]
+          } else {
+             # Use logicle transformation for fluorescence
+             trans_obj <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
+             fl_trans <- trans_obj(data_raw[, bead_chan])
+          }
       }
 
       # PRE-SAMPLE for UI responsiveness
@@ -2377,7 +2503,7 @@ server <- function(input, output, session) {
       data_singlets <- rv$temp_gated_data_singlets
 
       # Apply compensation if available
-      trans <- logicleTransform()
+      trans <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
 
       compensated_fs <- NULL
       
@@ -2398,21 +2524,18 @@ server <- function(input, output, session) {
       
                       # Use the specific matrix for compensate()
                       compensated_fs <- compensate(ff_singlets, comp_mat_to_use)                
-                # Use Standard Logicle Transform for consistent "Cloud" visualization
-                # estimateLogicle can be too aggressive on correlated data
-                trans_obj <- logicleTransform()
+                # --- REFINED VISUALIZATION (Manual Logicle) ---
+                # Instead of estimateLogicle (which fails on non-linear artifacts),
+                # we use a standard logicleTransform with a wider linear region.
+                # This 'absorbs' the negative values from compensation into a natural cluster.
+                trans_func <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
                 
-                if (inherits(trans_obj, "transformList")) {
-                    transformed_fs <- transform(compensated_fs, trans_obj)
-                    rv$current_gating_data_transform <- trans_obj
-                    annexin <- exprs(transformed_fs)[, "BL1-A"]
-                    pi <- exprs(transformed_fs)[, "BL2-A"]
-                } else {
-                    # Fallback function
-                    rv$current_gating_data_transform <- NULL 
-                    annexin <- trans_obj(exprs(compensated_fs)[, "BL1-A"])
-                    pi <- trans_obj(exprs(compensated_fs)[, "BL2-A"])
-                }
+                # Apply directly to matrix to avoid transform() scoping issues
+                exprs_data <- exprs(compensated_fs)
+                annexin <- trans_func(exprs_data[, "BL1-A"])
+                pi <- trans_func(exprs_data[, "BL2-A"])
+                
+                rv$current_gating_data_transform <- trans_func
                 
               } else {
         annexin <- trans(data_singlets[, "BL1-A"])
@@ -2444,7 +2567,7 @@ server <- function(input, output, session) {
         # Diagnostic: Show applied matrix
         if (!is.null(comp_mat_to_use)) {
            div(style="margin-bottom: 15px; border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: #f9f9f9;",
-               h6(icon("table"), " Applied Compensation Matrix (Inverse)", style="margin-top:0; color: #555;"),
+               h6(icon("table"), " Applied Spillover Matrix", style="margin-top:0; color: #555;"),
                HTML(kableExtra::kable(round(comp_mat_to_use, 4), format = "html") %>% 
                     kableExtra::kable_styling(bootstrap_options = "condensed", full_width = FALSE, position = "left"))
            )
@@ -2821,6 +2944,15 @@ server <- function(input, output, session) {
   observeEvent(input$next_to_fsc, {
     req(rv$current_gating_data_fsc)
 
+    # Auto-close polygon if needed
+    if (nrow(rv$polygon_points) >= 3) {
+       first_pt <- rv$polygon_points[1, ]
+       last_pt <- rv$polygon_points[nrow(rv$polygon_points), ]
+       if (!identical(as.numeric(first_pt), as.numeric(last_pt))) {
+           rv$polygon_points <- rbind(rv$polygon_points, first_pt)
+       }
+    }
+
     if (nrow(rv$polygon_points) < 3) {
       showNotification("Draw a polygon first (at least 3 points)", type = "error")
       return()
@@ -2870,6 +3002,15 @@ server <- function(input, output, session) {
   observeEvent(input$next_to_singlets, {
     req(rv$current_gating_data_fsc)
 
+    # Auto-close polygon if needed
+    if (nrow(rv$polygon_points) >= 3) {
+       first_pt <- rv$polygon_points[1, ]
+       last_pt <- rv$polygon_points[nrow(rv$polygon_points), ]
+       if (!identical(as.numeric(first_pt), as.numeric(last_pt))) {
+           rv$polygon_points <- rbind(rv$polygon_points, first_pt)
+       }
+    }
+
     if (nrow(rv$polygon_points) < 3) {
       showNotification("Draw a polygon first (at least 3 points)", type = "error")
       return()
@@ -2895,6 +3036,15 @@ server <- function(input, output, session) {
 
   observeEvent(input$next_to_annexin, {
     req(rv$current_gating_data_singlet)
+
+    # Auto-close polygon if needed
+    if (nrow(rv$polygon_points) >= 3) {
+       first_pt <- rv$polygon_points[1, ]
+       last_pt <- rv$polygon_points[nrow(rv$polygon_points), ]
+       if (!identical(as.numeric(first_pt), as.numeric(last_pt))) {
+           rv$polygon_points <- rbind(rv$polygon_points, first_pt)
+       }
+    }
 
     if (nrow(rv$polygon_points) < 3) {
       showNotification("Draw a polygon first (at least 3 points)", type = "error")
@@ -2962,7 +3112,7 @@ server <- function(input, output, session) {
       # Safety check for raw original data
       if (!is.null(rv$current_gating_data_fsc$data_raw_original)) {
           bead_raw_fsc <- rv$current_gating_data_fsc$data_raw_original[, "FSC-A"]
-          bead_raw_fl  <- logicleTransform()(rv$current_gating_data_fsc$data_raw_original[, bead_chan])
+          bead_raw_fl  <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)(rv$current_gating_data_fsc$data_raw_original[, bead_chan])
           
           bead_df_full <- data.frame(FSC = bead_raw_fsc, FL = bead_raw_fl)
           bead_df <- bead_df_full[is.finite(bead_df_full$FSC) & is.finite(bead_df_full$FL), ]
@@ -3155,7 +3305,7 @@ server <- function(input, output, session) {
 
     if (input$is_apoptosis_assay) {
       withProgress(message = "Analyzing samples...", value = 0, {
-        trans <- logicleTransform()
+        trans <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
         results <- data.frame()
         errors <- character()
         cell_counts_data <- data.frame() # NEW: Track cell counts
@@ -3183,7 +3333,7 @@ server <- function(input, output, session) {
                 bead_gate <- rv$temp_bead_gates[[cell_line]]
                 bead_chan <- input$bead_gate_channel
                 if (!is.null(bead_gate)) {
-                  trans_bead <- logicleTransform()
+                  trans_bead <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
                   in_bead_gate <- point.in.polygon(
                     data_raw[, "FSC-A"],
                     trans_bead(data_raw[, bead_chan]),
@@ -3645,6 +3795,26 @@ server <- function(input, output, session) {
   # === SMART X-AXIS BREAKS ===
 
   # === OUTPUT TABLES (UNCHANGED STRUCTURE) ===
+  
+  output$control_quality_alert_ui <- renderUI({
+    req(rv$control_quality_alert)
+    
+    lines <- rv$control_quality_alert
+    
+    div(
+      class = "alert alert-danger",
+      style = "border-left: 5px solid #d32f2f; margin-bottom: 20px;",
+      h5(icon("exclamation-triangle"), " Experimental Failure Warning: Low Control Viability"),
+      p("The following cell lines show < 70% viability in the untreated control (0 µM). This indicates a potential experimental failure or poor cell health."),
+      tags$ul(
+        lapply(1:nrow(lines), function(i) {
+          tags$li(sprintf("%s: %.1f%% Viability", lines$cell_line[i], lines$control_viable[i]))
+        })
+      ),
+      p(strong("Recommendation:"), " Do NOT enable normalization, as it will mask this failure by resetting these low values to 100%. Check raw data plots.")
+    )
+  })
+
   output$ic50_table <- renderTable(
     {
       req(rv$ic50_results, rv$ld50_results)
@@ -3653,21 +3823,26 @@ server <- function(input, output, session) {
       combined <- merge(rv$ic50_results, rv$ld50_results, by = "cell_line", all = TRUE)
       
       # Merge Absolute Survival if available
-      if (input$is_absolute_counting && !is.null(rv$absolute_survival_results)) {
+      if (input$is_absolute_counting && !is.null(rv$absolute_survival_results) && nrow(rv$absolute_survival_results) > 0) {
          # Rename columns before merge to avoid conflict
          abs_res <- rv$absolute_survival_results %>%
            dplyr::rename(Abs_IC50_uM = IC50_uM, Abs_IC50_lower = IC50_lower, Abs_IC50_upper = IC50_upper)
          combined <- merge(combined, abs_res, by = "cell_line", all = TRUE)
-         
-         if (!is.null(rv$absolute_ld50_results)) {
-            abs_ld_res <- rv$absolute_ld50_results %>%
-              dplyr::rename(Abs_LD50_uM = LD50_uM, Abs_LD50_lower = LD50_lower, Abs_LD50_upper = LD50_upper)
-            combined <- merge(combined, abs_ld_res, by = "cell_line", all = TRUE)
-         }
       } else {
          # Add empty cols
          combined$Abs_IC50_uM <- NA
+         combined$Abs_IC50_lower <- NA
+         combined$Abs_IC50_upper <- NA
+      }
+      
+      if (input$is_absolute_counting && !is.null(rv$absolute_ld50_results) && nrow(rv$absolute_ld50_results) > 0) {
+        abs_ld_res <- rv$absolute_ld50_results %>%
+          dplyr::rename(Abs_LD50_uM = LD50_uM, Abs_LD50_lower = LD50_lower, Abs_LD50_upper = LD50_upper)
+        combined <- merge(combined, abs_ld_res, by = "cell_line", all = TRUE)
+      } else {
          combined$Abs_LD50_uM <- NA
+         combined$Abs_LD50_lower <- NA
+         combined$Abs_LD50_upper <- NA
       }
 
             # Helper for HTML scientific notation
@@ -3788,7 +3963,7 @@ server <- function(input, output, session) {
       pretty_sci_html <- function(x) {
         if (is.na(x) || is.nan(x)) return("Fit Failed")
         if (x < 1e-9 && x > 0) return("Not Reached")
-        if (x == 0) return("0")
+        if (x == 0) return("0   ")
         
         if (abs(x) < 0.01 || abs(x) > 1000) {
            exponent <- floor(log10(abs(x)))
@@ -4356,16 +4531,26 @@ server <- function(input, output, session) {
     }
     rv$outlier_flags <- unique(outlier_flags)
 
-    # 3. NORMALIZATION
+    # 3. NORMALIZATION & CONTROL QC
     # ---------------------------------
     results_proc <- data_active
     
-    if (input$use_normalization) {
-       control_mean <- results_proc %>%
+    # Always calculate control stats for QC
+    control_mean <- results_proc %>%
          filter(concentration_uM == rv$control_concentration) %>%
          group_by(cell_line) %>%
          summarise(control_viable = mean(pct_viable, na.rm=TRUE), .groups="drop")
-         
+
+    # QC Check for Control Viability (< 70%)
+    low_quality_controls <- control_mean %>% filter(control_viable < 70)
+    
+    if (nrow(low_quality_controls) > 0) {
+        rv$control_quality_alert <- low_quality_controls
+    } else {
+        rv$control_quality_alert <- NULL
+    }
+    
+    if (input$use_normalization) {
        results_proc <- results_proc %>%
          left_join(control_mean, by="cell_line") %>%
          mutate(pct_viable = (pct_viable / control_viable) * 100)
@@ -4445,7 +4630,7 @@ server <- function(input, output, session) {
        if (input$is_absolute_counting && !is.null(abs_survival_summary)) {
           line_abs <- abs_survival_summary %>% filter(cell_line == line)
           if (nrow(line_abs) >= 4) {
-             line_abs$dose <- line_abs$concentration_uM + 0.1
+             line_abs$dose <- line_abs$concentration_uM + 0.001
              fit_abs <- tryCatch(drm(mean_survival ~ dose, data = line_abs, fct = LL.4()), error = function(e) NULL)
              
              if (!is.null(fit_abs)) {
@@ -4453,9 +4638,9 @@ server <- function(input, output, session) {
                 if (!is.null(res)) {
                    abs_survival_results <- rbind(abs_survival_results, data.frame(
                      cell_line = line,
-                     IC50_uM = res[1] - 0.1,
-                     IC50_lower = res[3] - 0.1,
-                     IC50_upper = res[4] - 0.1,
+                     IC50_uM = res[1] - 0.001,
+                     IC50_lower = res[3] - 0.001,
+                     IC50_upper = res[4] - 0.001,
                      stringsAsFactors = FALSE
                    ))
                    
@@ -4463,7 +4648,7 @@ server <- function(input, output, session) {
                    pred_curve <- data.frame(
                       dose = pred_doses,
                       predicted_survival = predict(fit_abs, newdata=data.frame(dose=pred_doses)),
-                      concentration_uM = pred_doses - 0.1,
+                      concentration_uM = pred_doses - 0.001,
                       cell_line = line
                    )
                    predicted_abs_survival_curves <- rbind(predicted_abs_survival_curves, pred_curve)
@@ -4491,7 +4676,7 @@ server <- function(input, output, session) {
 
        # --- Viability Fit ---
        if (nrow(line_viab) >= 4) {
-         line_viab$dose <- line_viab$concentration_uM + 0.1
+         line_viab$dose <- line_viab$concentration_uM + 0.001
          fit_viab <- tryCatch(drm(mean_viable ~ dose, data = line_viab, fct = LL.4()), error = function(e) NULL)
          if (is.null(fit_viab)) fit_viab <- tryCatch(drm(mean_viable ~ dose, data=line_viab, fct=LL.3()), error=function(e) NULL)
          if (is.null(fit_viab)) fit_viab <- tryCatch(drm(mean_viable ~ dose, data=line_viab, fct=W1.4()), error=function(e) NULL)
@@ -4501,9 +4686,9 @@ server <- function(input, output, session) {
             if (!is.null(res)) {
                ic50_results <- rbind(ic50_results, data.frame(
                  cell_line = line,
-                 IC50_uM = res[1] - 0.1,
-                 IC50_lower = res[3] - 0.1,
-                 IC50_upper = res[4] - 0.1,
+                 IC50_uM = res[1] - 0.001,
+                 IC50_lower = res[3] - 0.001,
+                 IC50_upper = res[4] - 0.001,
                  fit_method = "Robust",
                  stringsAsFactors = FALSE
                ))
@@ -4513,7 +4698,7 @@ server <- function(input, output, session) {
                pred_curve <- data.frame(
                   dose = pred_doses,
                   predicted_viable = predict(fit_viab, newdata=data.frame(dose=pred_doses)),
-                  concentration_uM = pred_doses - 0.1,
+                  concentration_uM = pred_doses - 0.001,
                   cell_line = line
                )
                predicted_viability_curves <- rbind(predicted_viability_curves, pred_curve)
@@ -4537,23 +4722,23 @@ server <- function(input, output, session) {
        
        # --- Death Fit ---
        if (nrow(line_death) >= 4) {
-          line_death$dose <- line_death$concentration_uM + 0.1
+          line_death$dose <- line_death$concentration_uM + 0.001
           fit_death <- tryCatch(drm(mean_death ~ dose, data = line_death, fct = LL.4()), error = function(e) NULL)
           if (!is.null(fit_death)) {
              res <- tryCatch(ED(fit_death, 50, interval="delta", display=FALSE), error=function(e) NULL)
              if (!is.null(res)) {
                 ld50_results <- rbind(ld50_results, data.frame(
                   cell_line = line,
-                  LD50_uM = res[1] - 0.1,
-                  LD50_lower = res[3] - 0.1,
-                  LD50_upper = res[4] - 0.1,
+                  LD50_uM = res[1] - 0.001,
+                  LD50_lower = res[3] - 0.001,
+                  LD50_upper = res[4] - 0.001,
                   stringsAsFactors = FALSE
                 ))
                 pred_doses <- seq(min(line_death$dose), max(line_death$dose), length.out = 200)
                 pred_curve <- data.frame(
                    dose = pred_doses,
                    predicted_death = predict(fit_death, newdata=data.frame(dose=pred_doses)),
-                   concentration_uM = pred_doses - 0.1,
+                   concentration_uM = pred_doses - 0.001,
                    cell_line = line
                 )
                 predicted_death_curves <- rbind(predicted_death_curves, pred_curve)
@@ -4701,14 +4886,14 @@ server <- function(input, output, session) {
         line_data <- plot_data_for_fitting %>% filter(cell_line == line)
         if (nrow(line_data) < 4) next
 
-        line_data$dose <- line_data$concentration_uM + 0.1
+        line_data$dose <- line_data$concentration_uM + 0.001
         fit <- tryCatch(drm(mean_pop ~ dose, data = line_data, fct = LL.4()), error = function(e) NULL)
 
         if (!is.null(fit)) {
           ec50_val <- tryCatch(ED(fit, 50, interval = "delta", display = FALSE)[1, 1], error = function(e) NA)
           ec50_results <- rbind(ec50_results, data.frame(
             cell_line = line,
-            EC50_uM = ec50_val - 0.1,
+            EC50_uM = ec50_val - 0.001,
             Target_Population = pop_col,
             stringsAsFactors = FALSE
           ))
@@ -4716,7 +4901,7 @@ server <- function(input, output, session) {
           pred_doses <- seq(min(line_data$dose), max(line_data$dose), length.out = 100)
           pred_data <- data.frame(dose = pred_doses)
           pred_data$predicted_pop <- predict(fit, newdata = pred_data)
-          pred_data$concentration_uM <- pred_doses - 0.1
+          pred_data$concentration_uM <- pred_doses - 0.001
           pred_data$cell_line <- line
           pred_data$Population <- pop_col
           all_predicted_curves_dr <- rbind(all_predicted_curves_dr, pred_data)
@@ -5167,6 +5352,7 @@ server <- function(input, output, session) {
                   
                   # Formatter
                   to_sci <- function(x) {
+                    if (is.na(x) || is.nan(x)) return("NA")
                     if (abs(x) < 0.01 || abs(x) > 1000) {
                        exponent <- floor(log10(abs(x)))
                        base <- x / (10^exponent)
@@ -5176,7 +5362,6 @@ server <- function(input, output, session) {
                   }
                   
                   val_s <- to_sci(val)
-                  if (val_s == "Not Reached") return(val_s)
                   low_s <- to_sci(low)
                   upp_s <- to_sci(upp)
                   
@@ -5193,7 +5378,7 @@ server <- function(input, output, session) {
                 combined$Abs_LD50_lower <- NA
                 combined$Abs_LD50_upper <- NA
                 
-                if (input$is_absolute_counting && !is.null(rv$absolute_survival_results)) {
+                if (input$is_absolute_counting && !is.null(rv$absolute_survival_results) && nrow(rv$absolute_survival_results) > 0) {
                    abs_res <- rv$absolute_survival_results %>%
                      dplyr::rename(Abs_IC50_uM = IC50_uM, Abs_IC50_lower = IC50_lower, Abs_IC50_upper = IC50_upper)
                    
@@ -5202,8 +5387,9 @@ server <- function(input, output, session) {
                    combined$Abs_IC50_uM <- abs_res$Abs_IC50_uM[rows_match]
                    combined$Abs_IC50_lower <- abs_res$Abs_IC50_lower[rows_match]
                    combined$Abs_IC50_upper <- abs_res$Abs_IC50_upper[rows_match]
+                }
                    
-                   if (!is.null(rv$absolute_ld50_results)) {
+                if (input$is_absolute_counting && !is.null(rv$absolute_ld50_results) && nrow(rv$absolute_ld50_results) > 0) {
                       abs_ld_res <- rv$absolute_ld50_results %>%
                         dplyr::rename(Abs_LD50_uM = LD50_uM, Abs_LD50_lower = LD50_lower, Abs_LD50_upper = LD50_upper)
                         
@@ -5211,7 +5397,6 @@ server <- function(input, output, session) {
                       combined$Abs_LD50_uM <- abs_ld_res$Abs_LD50_uM[rows_match_ld]
                       combined$Abs_LD50_lower <- abs_ld_res$Abs_LD50_lower[rows_match_ld]
                       combined$Abs_LD50_upper <- abs_ld_res$Abs_LD50_upper[rows_match_ld]
-                   }
                 }
                 
                 # Build list of final columns to keep
@@ -5373,7 +5558,7 @@ server <- function(input, output, session) {
               incProgress(0.7, detail = "Rendering apoptosis report...")
               
               abs_ic50_df_report <- NULL
-              if (input$is_absolute_counting && !is.null(rv$absolute_survival_results)) {
+              if (input$is_absolute_counting && !is.null(rv$absolute_survival_results) && nrow(rv$absolute_survival_results) > 0) {
                 abs_ic50_df_report <- rv$absolute_survival_results %>%
                   mutate(`Abs. IC50 [95% CI] µM` = sprintf("%.2f [%.2f - %.2f]", IC50_uM, IC50_lower, IC50_upper)) %>%
                   dplyr::select(cell_line, `Abs. IC50 [95% CI] µM`)
@@ -5742,7 +5927,10 @@ server <- function(input, output, session) {
                   analysis_settings = control_settings,
                   file_metadata = metadata_summary,
                   gate_summary = generic_gate_summary_report,
-                  gate_review_plots = rv$gate_review_plots, # Pass the gating plots
+                  gate_plots = rv$gate_plots, # Pass individual FSC/SSC plots
+                  singlet_plots = rv$singlet_gate_plots, # Pass individual Singlet plots
+                  marker_plots = rv$generic_histogram_plots, # Pass individual marker histograms
+                  gate_review_plots = rv$gate_review_plots, # Keep for UI parity if needed
                   bead_gate_plots = rv$bead_gate_plots, # NEW
                   bead_qc_plot = rv$bead_qc_plot_obj, # NEW
                   bead_impact_plot = rv$bead_impact_plot_obj, # NEW
@@ -5793,3 +5981,4 @@ server <- function(input, output, session) {
 # ============================================================================
 
 shinyApp(ui = ui, server = server)
+

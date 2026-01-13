@@ -21,6 +21,9 @@ params:
   analysis_settings: NULL
   file_metadata: NULL
   gate_summary: NULL
+  gate_plots: NULL
+  singlet_plots: NULL
+  marker_plots: NULL
   gate_review_plots: NULL
   comp_matrices: NULL
   spill_matrices: NULL
@@ -282,8 +285,8 @@ render_table <- function(data, caption = NULL) {
 pseudo_log_trans_for_breaks <- function() {
   scales::trans_new(
     "pseudo_log_for_breaks",
-    function(x) log10(x + 0.1),
-    function(x) 10^x - 0.1,
+    function(x) log10(x + 0.001),
+    function(x) 10^x - 0.001,
     domain = c(0, Inf)
   )
 }
@@ -292,7 +295,7 @@ pseudo_log_trans_for_breaks <- function() {
 custom_log_labels <- function(breaks) {
   lapply(breaks, function(x) {
     if (is.na(x) || !is.finite(x)) return("")
-    if (x == 0) return("0")
+    if (x == 0) return("0   ")
     
     # Standard pretty range (0.01 to 1000)
     if (abs(x) >= 0.01 && abs(x) < 1000) {
@@ -578,40 +581,85 @@ if (!is.null(gate_summary) && nrow(gate_summary) > 0) {
 }
 ```
 
-### 1.3.4 Gating Strategy Visualization
-The following plots illustrate the sequential gating strategy applied to each cell line:
-```{r results='asis'}
-if (params$is_absolute_counting) {
-  cat('1. **Beads**: Identification of high-fluorescence beads.\n')
-  cat('2. **FSC/SSC**: Exclusion of debris (non-beads).\n')
-} else {
-  cat('1. **FSC/SSC**: Exclusion of debris.\n')
-}
-```
-3. **Singlets**: Exclusion of doublets.
-4. **Channel Histograms**: Distribution of fluorescence intensity with the applied positivity threshold (dashed line).
+### 1.3.4 Gate 1: Cell Population (FSC-A vs SSC-A)
 
-```{r results='asis', fig.height=6, fig.width=14}
-library(grid)
-library(gridExtra)
-gate_plots <- params$gate_review_plots
+```{r results='asis', fig.height=6, fig.width=8}
+gate_plots <- params$gate_plots
 
 if (!is.null(gate_plots) && length(gate_plots) > 0) {
   for (line in names(gate_plots)) {
     cat('<div class="figure">\n')
-    cat(sprintf('<h4>Gating Strategy: %s</h4>\n', line))
-    
-    # Render the combined grob into the knitr stream
-    grid::grid.draw(gate_plots[[line]])
-    
-    cat(sprintf('<p class="figure-caption">Figure: Sequential gating strategy for %s. Includes %s morphological gates, and target channel histograms.</p>\n', 
-                line, ifelse(params$is_absolute_counting, "bead identification,", "")))
+    cat(sprintf('<h4>%s</h4>\n', line))
+    print(gate_plots[[line]])
+    cat('<p class="figure-caption">Figure: FSC-A vs SSC-A gating for cell population identification. Red polygon indicates the gate boundary used to exclude debris and non-cellular events.</p>\n')
     cat('</div>\n')
-    cat('\n\n')
     cat('<hr style="margin: 30px 0;">\n')
   }
 } else {
-  cat('<p><em>Gating strategy visualization not available.</em></p>\n')
+  cat('<p><em>Gate visualization not available</em></p>\n')
+}
+```
+
+### 1.3.5 Gate 2: Singlet Discrimination (FSC-A vs FSC-H)
+
+```{r results='asis', fig.height=6, fig.width=8}
+singlet_plots <- params$singlet_plots
+
+if (!is.null(singlet_plots) && length(singlet_plots) > 0) {
+  for (line in names(singlet_plots)) {
+    cat('<div class="figure">\n')
+    cat(sprintf('<h4>%s</h4>\n', line))
+    print(singlet_plots[[line]])
+    cat('<p class="figure-caption">Figure: FSC-A vs FSC-H singlet discrimination. Red polygon encloses single cells following the FSC-A/FSC-H diagonal. Events above the gate represent doublets and cell aggregates.</p>\n')
+    cat('</div>\n')
+    cat('<hr style="margin: 30px 0;">\n')
+  }
+} else {
+  cat('<p><em>Singlet gate visualization not available</em></p>\n')
+}
+```
+
+### 1.3.6 Gate 3: Multi-Channel Marker Strategy
+
+```{r results='asis', fig.height=5, fig.width=7}
+marker_plots <- params$marker_plots
+
+if (!is.null(marker_plots) && length(marker_plots) > 0) {
+  for (key in names(marker_plots)) {
+    # Key is 'CellLine_Channel'
+    cat('<div class="figure">\n')
+    cat(sprintf('<h4>Marker Gate: %s</h4>\n', key))
+    print(marker_plots[[key]])
+    cat('<p class="figure-caption">Figure: Fluorescence histogram showing the distribution of marker intensity and the applied positivity threshold (dashed line).</p>\n')
+    cat('</div>\n')
+    cat('<hr style="margin: 30px 0;">\n')
+  }
+} else {
+  cat('<p><em>Marker gate visualization not available</em></p>\n')
+}
+```
+
+### 1.3.7 Gating Strategy Overview (Combined)
+
+The following plots illustrate the sequential gating strategy applied to each cell line in a single view.
+
+```{r results='asis', fig.width=14, fig.height=5}
+gate_review_plots <- params$gate_review_plots
+
+if (!is.null(gate_review_plots) && length(gate_review_plots) > 0) {
+  for (line in names(gate_review_plots)) {
+    cat('<div class="figure">\n')
+    
+    # Force a new page for clean rendering
+    grid::grid.newpage()
+    grid::grid.draw(gate_review_plots[[line]])
+    
+    cat(sprintf('<p class="figure-caption">Figure: Combined gating strategy for cell line %s.</p>\n', line))
+    cat('</div>\n')
+    cat('<hr style="margin: 30px 0;">\n')
+    
+    cat('\n\n')
+  }
 }
 ```
 
@@ -1002,7 +1050,7 @@ cat('<h3>Recommended Citations</h3>\n')
 cat('<ul>\n')
 cat('<li><strong>Dose-Response Analysis:</strong> Ritz C, Baty F, Streibig JC, Gerhard D. Dose-Response Analysis Using R. <em>PLoS One</em>. 2015;10(12):e0146021.</li>\n')
 cat('<li><strong>Logicle Transformation:</strong> Parks DR, Roederer M, Moore WA. A new "Logicle" display method avoids misleading appearance of negatively transformed data from flow cytometry. <em>Cytometry A</em>. 2006;69(6):541-51.</li>\n')
-cat('<li><strong>Software DOI:</strong> Mahmood MOHAMMED ALI. (2025). Mahmood-M-Ali/FlowIC50: v3.0 (v3.0). Zenodo. <a href="https://doi.org/10.5281/zenodo.17872796">https://doi.org/10.5281/zenodo.17872796</a></li>\n')
+cat('<li><strong>Software DOI:</strong> Mahmood MOHAMMED ALI. (2025). Mahmood-M-Ali/FlowIC50: v3.1 (v3.1). Zenodo. <a href="https://doi.org/10.5281/zenodo.17872796">https://doi.org/10.5281/zenodo.17872796</a></li>\n')
 cat('</ul>\n')
 cat('</div>\n')
 ```

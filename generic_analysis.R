@@ -166,6 +166,16 @@ generic_gating_server <- function(input, output, session, rv, available_fluor_ch
   # Navigation from Singlets to Target Channel
   observeEvent(input$next_to_target_channel, {
     req(!input$is_apoptosis_assay, rv$current_gating_data_singlet)
+
+    # Auto-close polygon if needed
+    if (nrow(rv$polygon_points) >= 3) {
+       first_pt <- rv$polygon_points[1, ]
+       last_pt <- rv$polygon_points[nrow(rv$polygon_points), ]
+       if (!identical(as.numeric(first_pt), as.numeric(last_pt))) {
+           rv$polygon_points <- rbind(rv$polygon_points, first_pt)
+       }
+    }
+
     if (nrow(rv$polygon_points) < 3) {
       showNotification("Draw a polygon first (at least 3 points)", type = "error")
       return()
@@ -194,7 +204,7 @@ generic_gating_server <- function(input, output, session, rv, available_fluor_ch
       gate_id <- gate_def$id
 
       # Dynamically get data for the selected channel
-      trans <- logicleTransform()
+      trans <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
       data_singlets <- rv$temp_gated_data_singlets
       target_channel_data <- tryCatch(
         {
@@ -322,7 +332,6 @@ generic_gating_server <- function(input, output, session, rv, available_fluor_ch
 
       req(selected_channel)
 
-      trans <- logicleTransform()
       target_channel_data <- tryCatch(
         {
           current_line <- unique(rv$metadata$cell_line)[rv$current_cell_line_index]
@@ -339,22 +348,13 @@ generic_gating_server <- function(input, output, session, rv, available_fluor_ch
             ff <- flowFrame(exprs = rv$temp_gated_data_singlets)
             cf <- compensate(ff, comp_mat_to_use)
             
-            # Use smart transform for the live plot
-            st <- tryCatch(estimateLogicle(cf, channels = selected_channel), error = function(e) NULL)
-            if (!is.null(st)) {
-               exprs(transform(cf, st))[, selected_channel]
-            } else {
-               trans(exprs(cf)[, selected_channel])
-            }
+            # Use manual robust transform for the live plot
+            trans_obj <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
+            trans_obj(exprs(cf)[, selected_channel])
           } else {
             # Try to estimate even on uncompensated
-            ff_uncomp <- flowFrame(exprs = rv$temp_gated_data_singlets)
-            st <- tryCatch(estimateLogicle(ff_uncomp, channels = selected_channel), error = function(e) NULL)
-            if (!is.null(st)) {
-               exprs(transform(ff_uncomp, st))[, selected_channel]
-            } else {
-               trans(rv$temp_gated_data_singlets[, selected_channel])
-            }
+            trans_obj <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
+            trans_obj(rv$temp_gated_data_singlets[, selected_channel])
           }
         },
         error = function(e) {
@@ -434,10 +434,13 @@ generic_gating_server <- function(input, output, session, rv, available_fluor_ch
         ff_for_trans <- compensate(ff_for_trans, comp_mat_to_use)
       }
 
-      trans_list <- tryCatch(
-        estimateLogicle(ff_for_trans, channels = defined_channels),
-        error = function(e) NULL
-      )
+      # Standard robust transform
+      trans_obj <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
+      
+      # Create a transformList manually for all defined channels
+      t_list <- list()
+      for(ch in defined_channels) t_list[[ch]] <- trans_obj
+      trans_list <- transformList(defined_channels, t_list)
     }
     
     rv$thresholds[[cell_line]] <- list(
@@ -501,7 +504,7 @@ generic_gating_server <- function(input, output, session, rv, available_fluor_ch
     }
 
     # 3. Histogram Plots for each generic gate
-    trans <- logicleTransform()
+    trans <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
     for (gate_def in rv$generic_gate_defs) {
       selected_channel <- gate_def$channel
       current_threshold <- gate_def$threshold
@@ -546,6 +549,10 @@ generic_gating_server <- function(input, output, session, rv, available_fluor_ch
             theme_publication() +
             theme(legend.position = "none", plot.title = element_text(size = 10))
           gate_plots_list <- c(gate_plots_list, list(hist_plot))
+          
+          # Also store in individual list for report
+          hist_key <- paste0(cell_line, "_", selected_channel)
+          rv$generic_histogram_plots[[hist_key]] <- hist_plot
         }
       }
     }
@@ -580,7 +587,7 @@ run_generic_analysis <- function(metadata, thresholds, control_concentration, co
                                  is_absolute_counting = FALSE, bead_conc = 1000, bead_vol = 100, sample_vol = 1000, 
                                  temp_bead_gates = list(), bead_gate_channel = "BL1-A") {
   withProgress(message = "Running Multi-channel Generic Analysis...", value = 0, {
-    trans <- logicleTransform()
+    trans <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
     all_results_df <- data.frame()
     all_raw_intensity_data <- list() # To store raw intensity data for violin plots
     cell_counts_data <- data.frame() # NEW: Track cell counts
@@ -616,7 +623,7 @@ run_generic_analysis <- function(metadata, thresholds, control_concentration, co
           if (is_absolute_counting && !is.null(bead_gate_channel)) {
             bead_gate <- temp_bead_gates[[cell_line]]
             if (!is.null(bead_gate)) {
-              trans_bead <- logicleTransform()
+              trans_bead <- logicleTransform(w = 0.5, t = 1000000, m = 4.5, a = 0)
               in_bead_gate <- point.in.polygon(
                 data_raw[, "FSC-A"],
                 trans_bead(data_raw[, bead_gate_channel]),
@@ -833,3 +840,4 @@ run_generic_analysis <- function(metadata, thresholds, control_concentration, co
     ))
   }) # END withProgress
 } # END run_generic_analysis function
+

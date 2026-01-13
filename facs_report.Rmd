@@ -412,8 +412,8 @@ knitr::opts_chunk$set(
 pseudo_log_trans_for_breaks <- function() {
   scales::trans_new(
     "pseudo_log_for_breaks",
-    function(x) log10(x + 0.1), # Offset by 0.1 as used in the plot
-    function(x) 10^x - 0.1,
+    function(x) log10(x + 0.001), # Offset by 0.1 as used in the plot
+    function(x) 10^x - 0.001,
     domain = c(0, Inf)
   )
 }
@@ -422,7 +422,7 @@ pseudo_log_trans_for_breaks <- function() {
 custom_log_labels <- function(breaks) {
   lapply(breaks, function(x) {
     if (is.na(x) || !is.finite(x)) return("")
-    if (x == 0) return("0")
+    if (x == 0) return("0   ")
     
     # Standard pretty range (0.01 to 1000)
     if (abs(x) >= 0.01 && abs(x) < 1000) {
@@ -774,29 +774,27 @@ if (!is.null(gate_summary)) {
 }
 ```
 
-### 1.2.6 Gating Strategy Visualization
+### 1.2.6 Gating Strategy Overview (Combined)
 
-The following figures provide a comprehensive overview of the sequential gating strategy applied to each cell line.
+The following plots illustrate the sequential gating strategy applied to each cell line in a single view.
 
-```{r results='asis', fig.height=6, fig.width=14}
-gate_plots <- params$gate_review_plots
+```{r results='asis', fig.width=14, fig.height=5}
+gate_review_plots <- params$gate_review_plots
 
-if (!is.null(gate_plots) && length(gate_plots) > 0) {
-  for (line in names(gate_plots)) {
+if (!is.null(gate_review_plots) && length(gate_review_plots) > 0) {
+  for (line in names(gate_review_plots)) {
     cat('<div class="figure">\n')
-    cat(sprintf('<h4>Gating Strategy: %s</h4>\n', line))
     
-    # Render the combined grob
-    grid::grid.draw(gate_plots[[line]])
+    # Force a new page for clean rendering
+    grid::grid.newpage()
+    grid::grid.draw(gate_review_plots[[line]])
     
-    cat(sprintf('<p class="figure-caption">Figure: Sequential gating strategy for %s. Stages (from left to right): %s morphological classification (FSC/SSC and Singlets), and functional staining (Annexin V / PI).</p>\n', 
-                line, ifelse(params$is_absolute_counting, "Bead identification,", "")))
+    cat(sprintf('<p class="figure-caption">Figure: Combined gating strategy for cell line %s.</p>\n', line))
     cat('</div>\n')
-    cat('\n\n')
     cat('<hr style="margin: 30px 0;">\n')
+    
+    cat('\n\n')
   }
-} else {
-  cat('<p><em>Comprehensive gating visualization not available.</em></p>\n')
 }
 ```
 
@@ -1399,7 +1397,7 @@ cat('<ul>\n')
 cat('<li><strong>Annexin V Assay:</strong> Vermes I, Haanen C, Steffens-Nakken H, Reutelingsperger C. A novel assay for apoptosis. Flow cytometric detection of phosphatidylserine expression on early apoptotic cells using fluorescein labelled Annexin V. <em>J Immunol Methods</em>. 1995;184(1):39-51.</li>\n')
 cat('<li><strong>Dose-Response Analysis:</strong> Ritz C, Baty F, Streibig JC, Gerhard D. Dose-Response Analysis Using R. <em>PLoS One</em>. 2015;10(12):e0146021.</li>\n')
 cat('<li><strong>Logicle Transformation:</strong> Parks DR, Roederer M, Moore WA. A new "Logicle" display method avoids misleading appearance of negatively transformed data from flow cytometry. <em>Cytometry A</em>. 2006;69(6):541-51.</li>\n')
-cat('<li><strong>Software DOI:</strong> Mahmood MOHAMMED ALI. (2025). Mahmood-M-Ali/FlowIC50: v3.0 (v3.0). Zenodo. <a href="https://doi.org/10.5281/zenodo.17872796">https://doi.org/10.5281/zenodo.17872796</a></li>\n')
+cat('<li><strong>Software DOI:</strong> Mahmood MOHAMMED ALI. (2025). Mahmood-M-Ali/FlowIC50: v3.1 (v3.1). Zenodo. <a href="https://doi.org/10.5281/zenodo.17872796">https://doi.org/10.5281/zenodo.17872796</a></li>\n')
 cat('</ul>\n')
 cat('</div>\n')
 ```
